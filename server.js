@@ -37,7 +37,7 @@ app.use('/api/users', userRoutes);
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../coolnest-hvac/dist')));
 
-  app.get('*', (req, res) => {
+  app.get(/.*/, (req, res) => {
     res.sendFile(path.resolve(__dirname, '../coolnest-hvac/dist', 'index.html'));
   });
 } else {
