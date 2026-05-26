@@ -4,7 +4,7 @@ const Payroll = require('../models/Payroll');
 const Worker = require('../models/Worker');
 const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
-const { adminOnly } = require('../middlewares/roleMiddleware');
+const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware');
 
 // @desc    Generate/Calculate payroll for a month
 // @route   POST /api/payroll/generate
@@ -83,8 +83,8 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
 
 // @desc    Get payroll history
 // @route   GET /api/payroll
-// @access  Private/Admin
-router.get('/', protect, adminOnly, async (req, res) => {
+// @access  Private/Admin or Supervisor
+router.get('/', protect, supervisorOrAdmin, async (req, res) => {
   const { month, year, workerId } = req.query;
   const query = {};
   if (month) query.month = parseInt(month, 10);
@@ -93,7 +93,18 @@ router.get('/', protect, adminOnly, async (req, res) => {
 
   try {
     const payrolls = await Payroll.find(query).populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite').populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
-    const validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+    let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+    
+    if (req.user.role === 'Supervisor') {
+      if (!req.user.assignedSite) {
+        return res.json([]);
+      }
+      validPayrolls = validPayrolls.filter(pr => {
+        const siteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return siteId?.toString() === req.user.assignedSite.toString();
+      });
+    }
+    
     res.json(validPayrolls);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -207,13 +218,20 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 
 // @desc    Download single payslip PDF
 // @route   GET /api/payroll/pdf/:id
-// @access  Private/Admin
-router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
+// @access  Private/Admin or Supervisor
+router.get('/pdf/:id', protect, supervisorOrAdmin, async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
     if (!payroll || !payroll.workerId) return res.status(404).json({ message: 'Payroll record or associated worker not found' });
+
+    if (req.user.role === 'Supervisor') {
+      const siteId = payroll.workerId.assignedSite?._id || payroll.workerId.assignedSite;
+      if (!req.user.assignedSite || siteId?.toString() !== req.user.assignedSite.toString()) {
+        return res.status(403).json({ message: 'Not authorized to view this payslip' });
+      }
+    }
 
     const monthName = MONTH_NAMES[payroll.month - 1];
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -231,8 +249,8 @@ router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
 
 // @desc    Download ALL payslips for a month as a single PDF
 // @route   GET /api/payroll/pdf-all?month=X&year=Y
-// @access  Private/Admin
-router.get('/pdf-all', protect, adminOnly, async (req, res) => {
+// @access  Private/Admin or Supervisor
+router.get('/pdf-all', protect, supervisorOrAdmin, async (req, res) => {
   const { month, year } = req.query;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
@@ -240,7 +258,17 @@ router.get('/pdf-all', protect, adminOnly, async (req, res) => {
     const payrolls = await Payroll.find({ month: parseInt(month), year: parseInt(year) })
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
-    const validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+    let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+
+    if (req.user.role === 'Supervisor') {
+      if (!req.user.assignedSite) {
+        return res.status(403).json({ message: 'No site assigned to this supervisor' });
+      }
+      validPayrolls = validPayrolls.filter(pr => {
+        const siteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return siteId?.toString() === req.user.assignedSite.toString();
+      });
+    }
 
     if (validPayrolls.length === 0) return res.status(404).json({ message: 'No valid payroll records found for this month' });
 
