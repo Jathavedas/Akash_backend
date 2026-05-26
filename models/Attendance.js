@@ -5,6 +5,7 @@ const attendanceSchema = new mongoose.Schema({
   siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site', required: true },
   date: { type: Date, required: true },
   status: { type: String, enum: ['Present', 'Absent'], required: true },
+  overtimeHours: { type: Number, default: 0 },
   markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Admin or Supervisor who marked it
 }, { timestamps: true });
 

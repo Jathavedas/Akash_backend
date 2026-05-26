@@ -11,6 +11,9 @@ const attendanceRoutes = require('./routes/attendanceRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const userRoutes = require('./routes/userRoutes');
 
+// Initialize background jobs
+require('./cron/payrollCron');
+
 const app = express();
 
 // Connect to Database

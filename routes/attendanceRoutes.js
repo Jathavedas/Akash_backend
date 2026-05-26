@@ -35,6 +35,7 @@ router.post('/bulk', protect, supervisorOrAdmin, async (req, res) => {
 
         if (existing) {
           existing.status = record.status;
+          existing.overtimeHours = record.overtimeHours || 0;
           existing.markedBy = req.user._id;
           await existing.save();
           attendanceRecords.push(existing);
@@ -44,6 +45,7 @@ router.post('/bulk', protect, supervisorOrAdmin, async (req, res) => {
             siteId: siteId,
             date: targetDate,
             status: record.status,
+            overtimeHours: record.overtimeHours || 0,
             markedBy: req.user._id
           });
           attendanceRecords.push(newAtt);
