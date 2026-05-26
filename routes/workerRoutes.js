@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Worker = require('../models/Worker');
+const Payroll = require('../models/Payroll');
+const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware');
 
@@ -105,7 +107,10 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const worker = await Worker.findByIdAndDelete(req.params.id);
     if (worker) {
-      res.json({ message: 'Worker removed' });
+      // Cascade delete to clean up associated data
+      await Payroll.deleteMany({ workerId: req.params.id });
+      await Attendance.deleteMany({ workerId: req.params.id });
+      res.json({ message: 'Worker and associated records removed' });
     } else {
       res.status(404).json({ message: 'Worker not found' });
     }

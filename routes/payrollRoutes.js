@@ -93,7 +93,8 @@ router.get('/', protect, adminOnly, async (req, res) => {
 
   try {
     const payrolls = await Payroll.find(query).populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite').populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
-    res.json(payrolls);
+    const validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+    res.json(validPayrolls);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -212,7 +213,7 @@ router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
     const payroll = await Payroll.findById(req.params.id)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
-    if (!payroll) return res.status(404).json({ message: 'Payroll record not found' });
+    if (!payroll || !payroll.workerId) return res.status(404).json({ message: 'Payroll record or associated worker not found' });
 
     const monthName = MONTH_NAMES[payroll.month - 1];
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -239,7 +240,9 @@ router.get('/pdf-all', protect, adminOnly, async (req, res) => {
     const payrolls = await Payroll.find({ month: parseInt(month), year: parseInt(year) })
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
-    if (payrolls.length === 0) return res.status(404).json({ message: 'No payroll records found for this month' });
+    const validPayrolls = payrolls.filter(pr => pr.workerId !== null);
+
+    if (validPayrolls.length === 0) return res.status(404).json({ message: 'No valid payroll records found for this month' });
 
     const monthName = MONTH_NAMES[parseInt(month) - 1];
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -249,7 +252,7 @@ router.get('/pdf-all', protect, adminOnly, async (req, res) => {
 
     doc.pipe(res);
 
-    payrolls.forEach((pr, index) => {
+    validPayrolls.forEach((pr, index) => {
       if (index > 0) doc.addPage();
       drawPayslip(doc, pr, monthName, year);
     });
