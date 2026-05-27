@@ -231,5 +231,28 @@ router.post('/send-emails', protect, adminOnly, async (req, res) => {
   }
 });
 
-module.exports = router;
+// @desc    Update payroll status
+// @route   PUT /api/payroll/:id/status
+// @access  Private/Admin
+router.put('/:id/status', protect, adminOnly, async (req, res) => {
+  const { status } = req.body;
+  if (!['Pending', 'Approved', 'Paid'].includes(status)) {
+    return res.status(400).json({ message: 'Invalid status' });
+  }
 
+  try {
+    const payroll = await Payroll.findById(req.params.id);
+    if (!payroll) {
+      return res.status(404).json({ message: 'Payroll not found' });
+    }
+
+    payroll.status = status;
+    await payroll.save();
+
+    res.json({ message: 'Payroll status updated successfully', payroll });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+module.exports = router;
