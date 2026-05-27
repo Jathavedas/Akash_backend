@@ -97,4 +97,17 @@ router.get('/', protect, supervisorOrAdmin, async (req, res) => {
   }
 });
 
+// @desc    Get attendance records for a specific worker
+// @route   GET /api/attendance/worker/:workerId
+// @access  Private
+router.get('/worker/:workerId', protect, supervisorOrAdmin, async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const attendances = await Attendance.find({ workerId }).sort({ date: 1 });
+    res.json(attendances);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;
