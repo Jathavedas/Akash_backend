@@ -105,6 +105,7 @@ function generatePayslipBuffer(pr, monthName, year) {
       const doc = new PDFDocument({ size: 'A4', margin: 50 });
       let buffers = [];
       doc.on('data', buffers.push.bind(buffers));
+      doc.on('error', reject);
       doc.on('end', () => {
         let pdfData = Buffer.concat(buffers);
         resolve(pdfData);

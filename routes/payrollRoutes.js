@@ -215,24 +215,28 @@ router.post('/send-emails', protect, adminOnly, async (req, res) => {
     const payrolls = await Payroll.find({ month: parseInt(month), year: parseInt(year) })
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
-    let sentCount = 0;
-    let errors = [];
+    const eligibleWorkers = payrolls.filter(pr => pr.workerId && pr.workerId.email);
+    
+    if (eligibleWorkers.length === 0) {
+      return res.status(400).json({ message: 'No eligible workers with email addresses found.' });
+    }
 
-    const monthName = MONTH_NAMES[parseInt(month) - 1];
+    // Respond immediately to prevent gateway timeout
+    res.json({ message: `Started sending emails to ${eligibleWorkers.length} workers. You can continue using the dashboard.` });
 
-    for (let pr of payrolls) {
-      if (pr.workerId && pr.workerId.email) {
+    // Process in background
+    setTimeout(async () => {
+      const monthName = MONTH_NAMES[parseInt(month) - 1];
+      for (let pr of eligibleWorkers) {
         try {
           const pdfBuffer = await generatePayslipBuffer(pr, monthName, year);
           await sendPayslipEmail(pr.workerId, pdfBuffer, monthName, year);
-          sentCount++;
         } catch (err) {
-          errors.push({ worker: pr.workerId.employeeId, error: err.message });
+          console.error(`Failed to send email to ${pr.workerId.employeeId}: ${err.message}`);
         }
       }
-    }
+    }, 0);
 
-    res.json({ message: `Successfully sent ${sentCount} emails.`, errors });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
