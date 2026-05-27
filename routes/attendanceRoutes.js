@@ -21,6 +21,13 @@ router.post('/bulk', protect, supervisorOrAdmin, async (req, res) => {
     const attendanceRecords = [];
     const errors = [];
 
+    if (req.user.role === 'Supervisor') {
+      const todayStr = new Date().toISOString().substring(0, 10);
+      if (date !== todayStr) {
+        return res.status(403).json({ message: 'Supervisors can only mark attendance for today' });
+      }
+    }
+
     // Parse date ensuring it's standard UTC midnight for strict matching
     const targetDate = new Date(date);
     targetDate.setUTCHours(0, 0, 0, 0);

@@ -9,7 +9,14 @@ const { adminOnly } = require('../middlewares/roleMiddleware');
 // @access  Private (Admin & Supervisor can view, but maybe supervisor shouldn't see all. We'll allow taking from query if needed)
 router.get('/', protect, async (req, res) => {
   try {
-    const sites = await Site.find({});
+    let query = {};
+    if (req.user.role === 'Supervisor') {
+      if (!req.user.assignedSite) {
+        return res.json([]);
+      }
+      query._id = req.user.assignedSite;
+    }
+    const sites = await Site.find(query);
     res.json(sites);
   } catch (error) {
     res.status(500).json({ message: error.message });

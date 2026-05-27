@@ -9,7 +9,7 @@ const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware'
 // @desc    Generate/Calculate payroll for a month
 // @route   POST /api/payroll/generate
 // @access  Private/Admin
-router.post('/generate', protect, adminOnly, async (req, res) => {
+router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
   const { month, year, workerIds } = req.body;
   // workerIds can be 'all' or an array of specific IDs
 
@@ -21,6 +21,13 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
     let query = { status: 'Active' };
     if (Array.isArray(workerIds)) {
       query._id = { $in: workerIds };
+    }
+    
+    if (req.user.role === 'Supervisor') {
+      if (!req.user.assignedSite) {
+        return res.status(403).json({ message: 'No site assigned to this supervisor' });
+      }
+      query.assignedSite = req.user.assignedSite;
     }
 
     const workers = await Worker.find(query);
