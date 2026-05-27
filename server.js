@@ -20,7 +20,7 @@ const app = express();
 connectDB();
 
 // Middleware
-const allowedOrigins = ['http://localhost:5173', 'https://akash-omega-seven.vercel.app'];
+const allowedOrigins = ['http://localhost:5173', 'https://akash-omega-seven.vercel.app','https://coolnestengineering.in/'];
 app.use(cors({
   origin: function (origin, callback) {
     // allow requests with no origin (like mobile apps or curl requests)
