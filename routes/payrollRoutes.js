@@ -221,21 +221,29 @@ router.post('/send-emails', protect, adminOnly, async (req, res) => {
       return res.status(400).json({ message: 'No eligible workers with email addresses found.' });
     }
 
-    // Respond immediately to prevent gateway timeout
-    res.json({ message: `Started sending emails to ${eligibleWorkers.length} workers. You can continue using the dashboard.` });
+    // Process synchronously so we can return errors to the frontend
+    const errors = [];
+    let successCount = 0;
+    const monthName = MONTH_NAMES[parseInt(month) - 1];
 
-    // Process in background
-    setTimeout(async () => {
-      const monthName = MONTH_NAMES[parseInt(month) - 1];
-      for (let pr of eligibleWorkers) {
-        try {
-          const pdfBuffer = await generatePayslipBuffer(pr, monthName, year);
-          await sendPayslipEmail(pr.workerId, pdfBuffer, monthName, year);
-        } catch (err) {
-          console.error(`Failed to send email to ${pr.workerId.employeeId}: ${err.message}`);
-        }
+    for (let pr of eligibleWorkers) {
+      try {
+        const pdfBuffer = await generatePayslipBuffer(pr, monthName, year);
+        await sendPayslipEmail(pr.workerId, pdfBuffer, monthName, year);
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to send email to ${pr.workerId.employeeId}:`, err);
+        errors.push(`Failed for ${pr.workerId.firstName} (${pr.workerId.employeeId}): ${err.message}`);
       }
-    }, 0);
+    }
+
+    if (errors.length > 0) {
+      return res.status(500).json({ 
+        message: `Sent ${successCount} emails, but encountered errors: ${errors.join(' | ')}` 
+      });
+    }
+
+    res.json({ message: `Successfully sent emails to all ${successCount} workers.` });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
