@@ -16,6 +16,20 @@ router.get('/', protect, adminOnly, async (req, res) => {
   }
 });
 
+// @desc    Get all supervisors for public form
+// @route   GET /api/users/supervisors
+// @access  Public
+router.get('/supervisors', async (req, res) => {
+  try {
+    const supervisors = await User.find({ role: 'Supervisor' })
+      .select('name role assignedSite')
+      .populate('assignedSite', 'name location');
+    res.json(supervisors);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // @desc    Create a new user (usually a Supervisor)
 // @route   POST /api/users
 // @access  Private/Admin

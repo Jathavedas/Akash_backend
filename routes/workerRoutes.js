@@ -119,4 +119,49 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
+// @desc    Worker self-onboarding
+// @route   POST /api/workers/onboarding
+// @access  Public
+router.post('/onboarding', async (req, res) => {
+  try {
+    const workerData = req.body;
+    workerData.status = 'Pending';
+    // Base salary and employeeId should be empty/null initially
+    
+    const worker = new Worker(workerData);
+    const createdWorker = await worker.save();
+    res.status(201).json(createdWorker);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// @desc    Approve a pending worker
+// @route   PUT /api/workers/:id/approve
+// @access  Private (Admin)
+router.put('/:id/approve', protect, adminOnly, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.params.id);
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
+    }
+
+    const { employeeId, baseSalary, assignedSite, skillCategory } = req.body;
+    if (!employeeId || !baseSalary || !assignedSite || !skillCategory) {
+      return res.status(400).json({ message: 'Employee ID, Base Salary, Assigned Site, and Skill Category are required for approval' });
+    }
+
+    worker.status = 'Active';
+    worker.employeeId = employeeId;
+    worker.baseSalary = baseSalary;
+    worker.assignedSite = assignedSite;
+    worker.skillCategory = skillCategory;
+
+    const updatedWorker = await worker.save();
+    res.json(updatedWorker);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 module.exports = router;
