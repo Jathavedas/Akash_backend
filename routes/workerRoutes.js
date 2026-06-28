@@ -6,6 +6,20 @@ const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware');
 
+// Helper to generate unique employee ID
+const generateEmployeeId = async () => {
+  const lastWorker = await Worker.findOne({ employeeId: { $regex: /^EMP/ } }).sort({ employeeId: -1 });
+  let nextIdNum = 1;
+  if (lastWorker && lastWorker.employeeId) {
+    const lastId = lastWorker.employeeId.replace('EMP', '');
+    const parsed = parseInt(lastId, 10);
+    if (!isNaN(parsed)) {
+      nextIdNum = parsed + 1;
+    }
+  }
+  return `EMP${nextIdNum.toString().padStart(4, '0')}`;
+};
+
 // @desc    Get workers (filtered by site or all for admin)
 // @route   GET /api/workers
 // @access  Private (Admin or Supervisor)
@@ -74,6 +88,10 @@ router.post('/', protect, supervisorOrAdmin, async (req, res) => {
       workerData.assignedSite = req.user.assignedSite;
     }
 
+    if (!workerData.employeeId) {
+      workerData.employeeId = await generateEmployeeId();
+    }
+
     const worker = new Worker(workerData);
     const createdWorker = await worker.save();
     res.status(201).json(createdWorker);
@@ -126,7 +144,10 @@ router.post('/onboarding', async (req, res) => {
   try {
     const workerData = req.body;
     workerData.status = 'Pending';
-    // Base salary and employeeId should be empty/null initially
+    // Generate employee ID automatically
+    if (!workerData.employeeId) {
+      workerData.employeeId = await generateEmployeeId();
+    }
     
     const worker = new Worker(workerData);
     const createdWorker = await worker.save();
