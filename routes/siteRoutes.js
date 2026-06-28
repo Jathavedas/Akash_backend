@@ -4,6 +4,18 @@ const Site = require('../models/Site');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly } = require('../middlewares/roleMiddleware');
 
+// @desc    Get all sites (Public)
+// @route   GET /api/sites/public
+// @access  Public
+router.get('/public', async (req, res) => {
+  try {
+    const sites = await Site.find().select('name location');
+    res.json(sites);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // @desc    Get all sites
 // @route   GET /api/sites
 // @access  Private (Admin & Supervisor can view, but maybe supervisor shouldn't see all. We'll allow taking from query if needed)
