@@ -167,9 +167,15 @@ router.put('/:id/approve', protect, adminOnly, async (req, res) => {
       return res.status(404).json({ message: 'Worker not found' });
     }
 
-    const { employeeId, baseSalary, assignedSite, skillCategory } = req.body;
-    if (!employeeId || !baseSalary || !assignedSite || !skillCategory) {
-      return res.status(400).json({ message: 'Employee ID, Base Salary, Assigned Site, and Skill Category are required for approval' });
+    const { baseSalary, assignedSite, skillCategory } = req.body;
+    let { employeeId } = req.body;
+
+    if (!baseSalary || !assignedSite || !skillCategory) {
+      return res.status(400).json({ message: 'Base Salary, Assigned Site, and Skill Category are required for approval' });
+    }
+
+    if (!employeeId) {
+      employeeId = await generateEmployeeId();
     }
 
     worker.status = 'Active';
