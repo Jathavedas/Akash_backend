@@ -26,6 +26,15 @@ router.post('/bulk', protect, supervisorOrAdmin, async (req, res) => {
       if (date !== todayStr) {
         return res.status(403).json({ message: 'Supervisors can only mark attendance for today' });
       }
+
+      // Check for 9:30 AM IST deadline
+      const now = new Date();
+      const istTime = new Date(now.getTime() + (330 * 60000));
+      const hours = istTime.getUTCHours();
+      const minutes = istTime.getUTCMinutes();
+      if (hours > 9 || (hours === 9 && minutes > 30)) {
+        return res.status(403).json({ message: 'Supervisors can only mark attendance till 9:30 AM' });
+      }
     }
 
     // Parse date ensuring it's standard UTC midnight for strict matching
