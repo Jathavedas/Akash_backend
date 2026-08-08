@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Attendance = require('../models/Attendance');
 const Worker = require('../models/Worker');
 const { protect } = require('../middlewares/authMiddleware');
@@ -114,6 +115,39 @@ router.get('/worker/:workerId', protect, supervisorOrAdmin, async (req, res) => 
     const { workerId } = req.params;
     const attendances = await Attendance.find({ workerId }).sort({ date: 1 });
     res.json(attendances);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Get monthly overtime summary for a site
+// @route   GET /api/attendance/monthly-summary
+// @access  Private
+router.get('/monthly-summary', protect, supervisorOrAdmin, async (req, res) => {
+  const { siteId, year, month } = req.query; // month 1-12
+  try {
+    if (req.user.role === 'Supervisor' && req.user.assignedSite.toString() !== siteId) {
+      return res.status(403).json({ message: 'Not authorized for this site' });
+    }
+    
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    const summary = await Attendance.aggregate([
+      { 
+        $match: { 
+          siteId: new mongoose.Types.ObjectId(siteId),
+          date: { $gte: startDate, $lte: endDate }
+        } 
+      },
+      {
+        $group: {
+          _id: '$workerId',
+          totalOvertime: { $sum: '$overtimeHours' }
+        }
+      }
+    ]);
+    res.json(summary);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
