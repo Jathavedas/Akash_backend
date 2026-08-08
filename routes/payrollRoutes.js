@@ -10,7 +10,7 @@ const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware'
 // @route   POST /api/payroll/generate
 // @access  Private/Admin
 router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
-  const { month, year, workerIds } = req.body;
+  const { month, year, workerIds, siteId } = req.body;
   // workerIds can be 'all' or an array of specific IDs
 
   if (!month || !year) {
@@ -28,6 +28,8 @@ router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
         return res.status(403).json({ message: 'No site assigned to this supervisor' });
       }
       query.assignedSite = req.user.assignedSite;
+    } else if (req.user.role === 'Admin' && siteId) {
+      query.assignedSite = siteId;
     }
 
     const workers = await Worker.find(query);
@@ -92,7 +94,7 @@ router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
 // @route   GET /api/payroll
 // @access  Private/Admin or Supervisor
 router.get('/', protect, supervisorOrAdmin, async (req, res) => {
-  const { month, year, workerId } = req.query;
+  const { month, year, workerId, siteId: querySiteId } = req.query;
   const query = {};
   if (month) query.month = parseInt(month, 10);
   if (year) query.year = parseInt(year, 10);
@@ -107,8 +109,13 @@ router.get('/', protect, supervisorOrAdmin, async (req, res) => {
         return res.json([]);
       }
       validPayrolls = validPayrolls.filter(pr => {
-        const siteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
-        return siteId?.toString() === req.user.assignedSite.toString();
+        const wSiteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return wSiteId?.toString() === req.user.assignedSite.toString();
+      });
+    } else if (req.user.role === 'Admin' && querySiteId) {
+      validPayrolls = validPayrolls.filter(pr => {
+        const wSiteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return wSiteId?.toString() === querySiteId;
       });
     }
     

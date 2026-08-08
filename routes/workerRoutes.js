@@ -49,7 +49,7 @@ router.get('/', protect, supervisorOrAdmin, async (req, res) => {
       ];
     }
 
-    const workers = await Worker.find(query).populate('assignedSite', 'name location');
+    const workers = await Worker.find(query).sort({ firstName: 1, lastName: 1 }).populate('assignedSite', 'name location');
     res.json(workers);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -102,17 +102,25 @@ router.post('/', protect, supervisorOrAdmin, async (req, res) => {
 
 // @desc    Update a worker
 // @route   PUT /api/workers/:id
-// @access  Private/Admin
-router.put('/:id', protect, adminOnly, async (req, res) => {
+// @access  Private (Supervisor or Admin)
+router.put('/:id', protect, supervisorOrAdmin, async (req, res) => {
   try {
     const worker = await Worker.findById(req.params.id);
-    if (worker) {
-      Object.assign(worker, req.body);
-      const updatedWorker = await worker.save();
-      res.json(updatedWorker);
-    } else {
-      res.status(404).json({ message: 'Worker not found' });
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
     }
+    
+    if (req.user.role === 'Supervisor' && worker.assignedSite.toString() !== req.user.assignedSite.toString()) {
+      return res.status(403).json({ message: 'Not authorized for this worker' });
+    }
+
+    Object.assign(worker, req.body);
+    if (req.user.role === 'Supervisor') {
+      worker.assignedSite = req.user.assignedSite; 
+    }
+    
+    const updatedWorker = await worker.save();
+    res.json(updatedWorker);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -120,18 +128,22 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
 
 // @desc    Delete a worker
 // @route   DELETE /api/workers/:id
-// @access  Private/Admin
-router.delete('/:id', protect, adminOnly, async (req, res) => {
+// @access  Private (Supervisor or Admin)
+router.delete('/:id', protect, supervisorOrAdmin, async (req, res) => {
   try {
-    const worker = await Worker.findByIdAndDelete(req.params.id);
-    if (worker) {
-      // Cascade delete to clean up associated data
-      await Payroll.deleteMany({ workerId: req.params.id });
-      await Attendance.deleteMany({ workerId: req.params.id });
-      res.json({ message: 'Worker and associated records removed' });
-    } else {
-      res.status(404).json({ message: 'Worker not found' });
+    const worker = await Worker.findById(req.params.id);
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
     }
+    
+    if (req.user.role === 'Supervisor' && worker.assignedSite.toString() !== req.user.assignedSite.toString()) {
+      return res.status(403).json({ message: 'Not authorized to delete this worker' });
+    }
+
+    await Worker.findByIdAndDelete(req.params.id);
+    await Payroll.deleteMany({ workerId: req.params.id });
+    await Attendance.deleteMany({ workerId: req.params.id });
+    res.json({ message: 'Worker and associated records removed' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

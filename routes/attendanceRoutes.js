@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const Attendance = require('../models/Attendance');
 const Worker = require('../models/Worker');
 const { protect } = require('../middlewares/authMiddleware');
-const { supervisorOrAdmin } = require('../middlewares/roleMiddleware');
+const { supervisorOrAdmin, adminOnly } = require('../middlewares/roleMiddleware');
 
 // @desc    Mark bulk attendance for a specific date and site
 // @route   POST /api/attendance/bulk
@@ -148,6 +148,60 @@ router.get('/monthly-summary', protect, supervisorOrAdmin, async (req, res) => {
       }
     ]);
     res.json(summary);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Get today's attendance summary grouped by site
+// @route   GET /api/attendance/today-summary
+// @access  Private/Admin
+router.get('/today-summary', protect, adminOnly, async (req, res) => {
+  try {
+    const today = new Date();
+    const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    // To match how frontend/DB saves it (UTC midnight):
+    const todayStr = new Date().toISOString().substring(0, 10);
+    const queryDate = new Date(todayStr);
+    queryDate.setUTCHours(0, 0, 0, 0);
+
+    const workers = await Worker.find({ status: 'Active' }).populate('assignedSite', 'name');
+    const attendances = await Attendance.find({ date: queryDate });
+
+    const siteMap = {};
+
+    workers.forEach(w => {
+      const site = w.assignedSite;
+      if (!site) return;
+      const siteId = site._id.toString();
+      if (!siteMap[siteId]) {
+        siteMap[siteId] = {
+          siteId,
+          siteName: site.name,
+          total: 0,
+          present: 0,
+          absent: 0,
+          pending: 0
+        };
+      }
+      siteMap[siteId].total += 1;
+    });
+
+    attendances.forEach(a => {
+      const siteId = a.siteId.toString();
+      if (siteMap[siteId]) {
+        if (a.status === 'Present') siteMap[siteId].present += 1;
+        if (a.status === 'Absent') siteMap[siteId].absent += 1;
+      }
+    });
+
+    // Calculate pending
+    Object.values(siteMap).forEach(site => {
+      site.pending = site.total - (site.present + site.absent);
+    });
+
+    res.json(Object.values(siteMap));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
