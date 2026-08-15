@@ -6,6 +6,67 @@ const Worker = require('../models/Worker');
 const { protect } = require('../middlewares/authMiddleware');
 const { supervisorOrAdmin, adminOnly } = require('../middlewares/roleMiddleware');
 
+// @desc    Worker self-lookup: get own attendance/overtime by phone number
+// @route   GET /api/attendance/lookup?phone=XXXXXXXXXX
+// @access  Public
+router.get('/lookup', async (req, res) => {
+  try {
+    const { phone } = req.query;
+
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    // Find the worker by phone number (exact match)
+    const worker = await Worker.findOne({ phoneNumber: phone.trim() })
+      .select('firstName lastName employeeId phoneNumber designation assignedSite')
+      .populate('assignedSite', 'name');
+
+    if (!worker) {
+      return res.status(404).json({ message: 'No worker found with this phone number' });
+    }
+
+    // Optional month/year filter, defaults to current month
+    const now = new Date();
+    const year = parseInt(req.query.year, 10) || now.getFullYear();
+    const month = parseInt(req.query.month, 10) || (now.getMonth() + 1); // 1-12
+
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    const attendances = await Attendance.find({
+      workerId: worker._id,
+      date: { $gte: startDate, $lte: endDate }
+    }).sort({ date: 1 });
+
+    // Shape data for a calendar: keyed by day
+    const calendar = attendances.map(a => ({
+      date: a.date.toISOString().substring(0, 10), // YYYY-MM-DD
+      status: a.status,
+      overtimeHours: a.overtimeHours
+    }));
+
+    const totalOvertime = attendances.reduce((sum, a) => sum + (a.overtimeHours || 0), 0);
+    const presentDays = attendances.filter(a => a.status === 'Present').length;
+    const absentDays = attendances.filter(a => a.status === 'Absent').length;
+
+    res.json({
+      worker: {
+        name: `${worker.firstName} ${worker.lastName}`,
+        employeeId: worker.employeeId,
+        designation: worker.designation,
+        site: worker.assignedSite ? worker.assignedSite.name : null
+      },
+      year,
+      month,
+      calendar,
+      summary: { presentDays, absentDays, totalOvertime }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // @desc    Mark bulk attendance for a specific date and site
 // @route   POST /api/attendance/bulk
 // @access  Private (Supervisor/Admin)
