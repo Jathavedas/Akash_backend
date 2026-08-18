@@ -114,7 +114,15 @@ router.put('/:id', protect, supervisorOrAdmin, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized for this worker' });
     }
 
-    Object.assign(worker, req.body);
+    const updateData = { ...req.body };
+
+    if (req.user.role === 'Supervisor') {
+      // Supervisors can never change salary — strip it regardless of what was sent
+      delete updateData.baseSalary;
+      delete updateData.salaryType;
+    }
+
+    Object.assign(worker, updateData);
     if (req.user.role === 'Supervisor') {
       worker.assignedSite = req.user.assignedSite; 
     }
