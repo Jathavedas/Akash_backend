@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -10,6 +10,9 @@ const workerRoutes = require('./routes/workerRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const userRoutes = require('./routes/userRoutes');
+const transferRoutes = require('./routes/transferRoutes');
+const auditRoutes = require('./routes/auditRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 
 // Initialize background jobs
 require('./cron/payrollCron');
@@ -20,14 +23,20 @@ const app = express();
 connectDB();
 
 // Middleware
-const allowedOrigins = ['http://localhost:5173', 'https://akash-omega-seven.vercel.app','https://coolnestengineering.in'];
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'https://akash-omega-seven.vercel.app',
+  'https://coolnestengineering.in'
+];
+
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(null, true); // Permissive for enterprise field testing
     }
   }
 }));
@@ -45,6 +54,9 @@ app.use('/api/workers', workerRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/transfers', transferRoutes);
+app.use('/api/audit-logs', auditRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {

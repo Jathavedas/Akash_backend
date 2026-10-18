@@ -1,15 +1,15 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const Payroll = require('../models/Payroll');
 const Worker = require('../models/Worker');
 const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
-const { adminOnly, supervisorOrAdmin } = require('../middlewares/roleMiddleware');
+const { adminOnly } = require('../middlewares/roleMiddleware');
 
 // @desc    Generate/Calculate payroll for a month
 // @route   POST /api/payroll/generate
 // @access  Private/Admin
-router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
+router.post('/generate', protect, adminOnly, async (req, res) => {
   const { month, year, workerIds, siteId } = req.body;
   // workerIds can be 'all' or an array of specific IDs
 
@@ -93,7 +93,7 @@ router.post('/generate', protect, supervisorOrAdmin, async (req, res) => {
 // @desc    Get payroll history
 // @route   GET /api/payroll
 // @access  Private/Admin or Supervisor
-router.get('/', protect, supervisorOrAdmin, async (req, res) => {
+router.get('/', protect, adminOnly, async (req, res) => {
   const { month, year, workerId, siteId: querySiteId } = req.query;
   const query = {};
   if (month) query.month = parseInt(month, 10);
@@ -136,7 +136,7 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 // @desc    Download single payslip PDF
 // @route   GET /api/payroll/pdf/:id
 // @access  Private/Admin or Supervisor
-router.get('/pdf/:id', protect, supervisorOrAdmin, async (req, res) => {
+router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
@@ -167,7 +167,7 @@ router.get('/pdf/:id', protect, supervisorOrAdmin, async (req, res) => {
 // @desc    Download ALL payslips for a month as a single PDF
 // @route   GET /api/payroll/pdf-all?month=X&year=Y
 // @access  Private/Admin or Supervisor
-router.get('/pdf-all', protect, supervisorOrAdmin, async (req, res) => {
+router.get('/pdf-all', protect, adminOnly, async (req, res) => {
   const { month, year } = req.query;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
@@ -282,3 +282,5 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
 });
 
 module.exports = router;
+
+

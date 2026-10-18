@@ -1,0 +1,10 @@
+﻿// Support both /lookup?phone=... and /calendar/:identifier
+router.get('/lookup', async (req, res) => {
+  const identifier = req.query.phone || req.query.employeeId || req.query.identifier;
+  if (!identifier) {
+    return res.status(400).json({ message: 'Phone number or Employee ID required' });
+  }
+  req.params = { identifier };
+  const handler = router.stack.find(s => s.route && s.route.path === '/calendar/:identifier').route.stack[0].handle;
+  return handler(req, res);
+});

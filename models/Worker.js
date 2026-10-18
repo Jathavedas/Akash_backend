@@ -1,15 +1,17 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const workerSchema = new mongoose.Schema({
   photo: { type: String }, // URL from cloudinary or local
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
-  employeeId: { type: String, unique: true, sparse: true },
-  phoneNumber: { type: String, required: true },
+  employeeId: { type: String, unique: true, sparse: true, index: true },
+  phoneNumber: { type: String, required: true, unique: true, index: true },
   email: { type: String },
   designation: { type: String, required: true },
   skillCategory: { type: String, enum: ['Skilled', 'Unskilled', 'Semi-Skilled'] },
   assignedSite: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' },
+  transferStatus: { type: String, enum: ['None', 'Pending'], default: 'None' },
+  pendingSite: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' },
   joiningDate: { type: Date, required: true },
   salaryType: { type: String, enum: ['Daily'], default: 'Daily' },
   baseSalary: { type: Number }, // Daily rate

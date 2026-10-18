@@ -1,12 +1,11 @@
-//  user page
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['Admin', 'Supervisor'], default: 'Supervisor' },
+  role: { type: String, enum: ['Admin', 'Manager', 'Supervisor'], default: 'Supervisor' },
   // Optional, only used for Supervisor
   assignedSite: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' }
 }, { timestamps: true });
