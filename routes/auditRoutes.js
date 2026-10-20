@@ -1,8 +1,23 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const AuditLog = require('../models/AuditLog');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly } = require('../middlewares/roleMiddleware');
+
+// @desc    Get dedicated manager activities / transactions for Admin review
+// @route   GET /api/audit-logs/manager-transactions
+// @access  Private (Admin Only)
+router.get('/manager-transactions', protect, adminOnly, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const logs = await AuditLog.find({ 'performedBy.role': 'Manager' })
+      .sort({ timestamp: -1 })
+      .limit(limit);
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 // @desc    Get audit logs with optional filters
 // @route   GET /api/audit-logs

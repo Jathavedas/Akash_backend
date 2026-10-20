@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const TransferRequest = require('../models/TransferRequest');
 const Worker = require('../models/Worker');
@@ -16,7 +16,7 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     const { identifier, targetSiteId, notes } = req.body;
     
     if (!identifier || !targetSiteId) {
-      return res.status(400).json({ message: 'Technician Phone/ID and Target Site are required' });
+      return res.status(400).json({ message: 'Worker Phone/ID and Target Site are required' });
     }
 
     // Supervisors can only request transfer to their assigned site
@@ -37,11 +37,11 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     }).populate('assignedSite', 'name location');
 
     if (!worker) {
-      return res.status(404).json({ message: 'No technician found with this Phone Number or Employee ID' });
+      return res.status(404).json({ message: 'No worker found with this Phone Number or Employee ID' });
     }
 
     if (worker.assignedSite && worker.assignedSite._id.toString() === targetSiteId) {
-      return res.status(400).json({ message: 'Technician is already permanently assigned to this project site' });
+      return res.status(400).json({ message: 'Worker is already permanently assigned to this project site' });
     }
 
     const targetSite = await Site.findById(targetSiteId);
@@ -57,7 +57,7 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     });
 
     if (existingPending) {
-      return res.status(400).json({ message: 'A pending transfer request already exists for this technician at this site' });
+      return res.status(400).json({ message: 'A pending transfer request already exists for this worker at this site' });
     }
 
     const previousState = {
@@ -100,7 +100,7 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     });
 
     res.status(201).json({
-      message: 'Technician added to site roster with status "Transfer Pending"',
+      message: 'Worker added to site roster with status "Transfer Pending"',
       transferRequest,
       worker
     });
@@ -153,7 +153,7 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
 
     const worker = await Worker.findById(transfer.workerId._id);
     if (!worker) {
-      return res.status(404).json({ message: 'Associated technician not found' });
+      return res.status(404).json({ message: 'Associated worker not found' });
     }
 
     const previousState = {
@@ -187,10 +187,10 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
         transferStatus: 'None',
         pendingSite: null
       },
-      details: `Transfer approved. Technician permanently reassigned to site "${transfer.toSite.name}"`
+      details: `Transfer approved. Worker permanently reassigned to site "${transfer.toSite.name}"`
     });
 
-    res.json({ message: 'Transfer approved successfully. Technician primary site updated.', transfer });
+    res.json({ message: 'Transfer approved successfully. Worker primary site updated.', transfer });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -240,7 +240,7 @@ router.put('/:id/reject', protect, managerOrAdmin, async (req, res) => {
       targetEntity: {
         entityType: 'Worker',
         entityId: worker?._id?.toString() || 'unknown',
-        name: worker ? `${worker.firstName} ${worker.lastName}` : 'Technician'
+        name: worker ? `${worker.firstName} ${worker.lastName}` : 'Worker'
       },
       previousState,
       newState: {

@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const Worker = require('../models/Worker');
 const Payroll = require('../models/Payroll');
@@ -29,23 +29,15 @@ router.get('/', protect, staffOnly, async (req, res) => {
   try {
     let query = {};
     
-    // If Supervisor, forcefully restrict to assigned site
+    // If Supervisor, forcefully restrict strictly to assigned site
     if (req.user.role === 'Supervisor') {
       if (!req.user.assignedSite) {
         return res.status(403).json({ message: 'No site assigned to this supervisor' });
       }
-      const siteId = req.user.assignedSite;
-      query.$or = [
-        { assignedSite: siteId },
-        { pendingSite: siteId, transferStatus: 'Pending' }
-      ];
+      query.assignedSite = req.user.assignedSite;
     } else if (req.query.site) {
-      // Admin/Manager can filter by site (including pending transfer workers)
-      const siteId = req.query.site;
-      query.$or = [
-        { assignedSite: siteId },
-        { pendingSite: siteId, transferStatus: 'Pending' }
-      ];
+      // Admin/Manager filtering by site: strictly show workers whose assignedSite matches this site
+      query.assignedSite = req.query.site;
     }
 
     // Optional status filter
@@ -60,8 +52,11 @@ router.get('/', protect, staffOnly, async (req, res) => {
         { employeeId: searchRegex },
         { phoneNumber: searchRegex }
       ];
-      if (query.$or) {
-        query = { $and: [{ $or: query.$or }, { $or: searchCondition }] };
+      if (query.assignedSite) {
+        query = {
+          assignedSite: query.assignedSite,
+          $or: searchCondition
+        };
       } else {
         query.$or = searchCondition;
       }
@@ -139,15 +134,33 @@ router.post('/', protect, managerOrAdmin, async (req, res) => {
     }
     workerData.phoneNumber = normalizedPhone;
 
-    // 2. Strict De-Duplication check
+    // 2. Strict De-Duplication check on Phone
     const existing = await Worker.findOne({ phoneNumber: normalizedPhone });
     if (existing) {
       return res.status(409).json({ 
-        message: 'A profile with this mobile number is already registered. Please contact your manager or verify your records via the Attendance Portal.' 
+        message: 'A worker profile with this mobile number is already registered. Please verify records or update the existing worker profile.' 
       });
     }
 
-    // 3. Employee ID generation if not provided
+    // 3. Duplicate Worker Name Validation (Case-insensitive check)
+    const trimmedFirst = (workerData.firstName || '').trim();
+    const trimmedLast = (workerData.lastName || '').trim();
+    if (!trimmedFirst) {
+      return res.status(400).json({ message: 'Worker first name is required.' });
+    }
+    const escapedFirst = trimmedFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedLast = trimmedLast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existingName = await Worker.findOne({
+      firstName: new RegExp(`^${escapedFirst}$`, 'i'),
+      lastName: new RegExp(`^${escapedLast}$`, 'i')
+    });
+    if (existingName) {
+      return res.status(400).json({
+        message: `A worker named "${trimmedFirst} ${trimmedLast}" already exists in the system. Duplicate names are not allowed. Please add a last name, initial, or middle name (e.g., "${trimmedFirst} ${trimmedLast} (A)" or full surname) to differentiate.`
+      });
+    }
+
+    // 4. Employee ID generation if not provided
     if (!workerData.employeeId) {
       workerData.employeeId = await generateEmployeeId();
     } else {
@@ -157,7 +170,7 @@ router.post('/', protect, managerOrAdmin, async (req, res) => {
       }
     }
 
-    // 4. Financial protection: Managers cannot set base salary
+    // 5. Financial protection: Managers cannot set base salary
     if (req.user.role === 'Manager') {
       delete workerData.baseSalary;
       delete workerData.salaryType;
@@ -184,7 +197,7 @@ router.post('/', protect, managerOrAdmin, async (req, res) => {
         assignedSite: createdWorker.assignedSite,
         status: createdWorker.status
       },
-      details: `Worker ${createdWorker.firstName} ${createdWorker.lastName} created by ${req.user.name}`
+      details: `Worker ${createdWorker.firstName} ${createdWorker.lastName} added by ${req.user.name} (${req.user.role})`
     });
 
     res.status(201).json(createdWorker);
@@ -225,6 +238,24 @@ router.put('/:id', protect, managerOrAdmin, async (req, res) => {
       updateData.phoneNumber = cleanPhone;
     }
 
+    // Check duplicate name if name is being changed
+    if (updateData.firstName !== undefined || updateData.lastName !== undefined) {
+      const targetFirst = (updateData.firstName !== undefined ? updateData.firstName : worker.firstName).trim();
+      const targetLast = (updateData.lastName !== undefined ? updateData.lastName : worker.lastName).trim();
+      const escapedFirst = targetFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapedLast = targetLast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const duplicateName = await Worker.findOne({
+        _id: { $ne: worker._id },
+        firstName: new RegExp(`^${escapedFirst}$`, 'i'),
+        lastName: new RegExp(`^${escapedLast}$`, 'i')
+      });
+      if (duplicateName) {
+        return res.status(400).json({
+          message: `Another worker named "${targetFirst} ${targetLast}" already exists in the system. Duplicate names are not allowed. Please add a last name or initial to differentiate.`
+        });
+      }
+    }
+
     // Zero Financial Access: Managers CANNOT modify baseSalary
     if (req.user.role === 'Manager') {
       delete updateData.baseSalary;
@@ -258,7 +289,7 @@ router.put('/:id', protect, managerOrAdmin, async (req, res) => {
         assignedSite: updatedWorker.assignedSite,
         status: updatedWorker.status
       },
-      details: `Worker profile updated by ${req.user.name}`
+      details: `Worker profile for ${updatedWorker.firstName} ${updatedWorker.lastName} updated by ${req.user.name} (${req.user.role})`
     });
 
     res.json(updatedWorker);
@@ -293,7 +324,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
       },
       previousState,
       newState: null,
-      details: `Worker ${previousState.firstName} ${previousState.lastName} deleted by ${req.user.name}`
+      details: `Worker ${previousState.firstName} ${previousState.lastName} deleted by ${req.user.name} (${req.user.role})`
     });
 
     res.json({ message: 'Worker and associated records removed successfully' });
@@ -319,8 +350,7 @@ router.post('/onboarding', async (req, res) => {
     }
     workerData.phoneNumber = normalizedPhone;
 
-    // 2. Strict De-Duplication Engine Requirement:
-    // Prompt: "A profile with this mobile number is already registered. Please contact your manager or verify your records via the Attendance Portal."
+    // 2. Strict De-Duplication Engine Requirement
     const existing = await Worker.findOne({ phoneNumber: normalizedPhone });
     if (existing) {
       return res.status(409).json({ 
@@ -328,7 +358,25 @@ router.post('/onboarding', async (req, res) => {
       });
     }
 
-    // 3. Generate unique employee ID
+    // 3. Duplicate Worker Name Validation (Case-insensitive check)
+    const trimmedFirst = (workerData.firstName || '').trim();
+    const trimmedLast = (workerData.lastName || '').trim();
+    if (!trimmedFirst) {
+      return res.status(400).json({ message: 'First name is required.' });
+    }
+    const escapedFirst = trimmedFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedLast = trimmedLast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existingName = await Worker.findOne({
+      firstName: new RegExp(`^${escapedFirst}$`, 'i'),
+      lastName: new RegExp(`^${escapedLast}$`, 'i')
+    });
+    if (existingName) {
+      return res.status(400).json({
+        message: `A worker named "${trimmedFirst} ${trimmedLast}" already exists in the system. Duplicate names are not permitted. Please add a last name, initial, or middle name (e.g., "${trimmedFirst} ${trimmedLast} (A)" or full surname) to differentiate.`
+      });
+    }
+
+    // 4. Generate unique employee ID
     if (!workerData.employeeId) {
       workerData.employeeId = await generateEmployeeId();
     }
@@ -356,7 +404,7 @@ router.post('/onboarding', async (req, res) => {
         designation: createdWorker.designation,
         status: 'Pending'
       },
-      details: `Technician self-registered via QR/Online Onboarding form`
+      details: `Worker self-registered via QR/Online Onboarding form`
     });
 
     res.status(201).json({
@@ -417,7 +465,7 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
       },
       previousState: { status: 'Pending' },
       newState: { status: 'Active', assignedSite, skillCategory, employeeId },
-      details: `Worker approved and activated by ${req.user.name}`
+      details: `Worker ${worker.firstName} ${worker.lastName} approved and activated by ${req.user.name} (${req.user.role})`
     });
 
     res.json(updatedWorker);

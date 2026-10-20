@@ -1,10 +1,13 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const Payroll = require('../models/Payroll');
 const Worker = require('../models/Worker');
 const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly } = require('../middlewares/roleMiddleware');
+const { logAudit } = require('../utils/auditLogger');
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 // @desc    Generate/Calculate payroll for a month
 // @route   POST /api/payroll/generate
@@ -37,8 +40,8 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
     const errors = [];
 
     // Date range for the month
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 1, 0, 0, 0, 0);
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
 
     for (let worker of workers) {
       try {
@@ -49,31 +52,38 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
         });
 
         let present = 0;
+        let halfDays = 0;
         let absent = 0;
         let totalOvertimeHours = 0;
 
         attendances.forEach(a => {
           if (a.status === 'Present') {
             present++;
-            if (a.overtimeHours) totalOvertimeHours += a.overtimeHours;
+            if (a.overtimeHours) totalOvertimeHours += Math.round(a.overtimeHours);
+          } else if (a.status === 'Half Day') {
+            halfDays++;
+            if (a.overtimeHours) totalOvertimeHours += Math.round(a.overtimeHours);
           } else if (a.status === 'Absent') {
             absent++;
           }
         });
 
-        let calculatedOvertimePay = totalOvertimeHours * (worker.baseSalary / 8);
-        let calculatedNet = (worker.baseSalary * present) + calculatedOvertimePay;
+        const hourlyRate = (worker.baseSalary || 700) / 8;
+        const calculatedOvertimePay = Math.round(totalOvertimeHours * hourlyRate);
+        const halfDayPay = Math.round(halfDays * ((worker.baseSalary || 700) * 0.5));
+        const fullDayPay = Math.round(present * (worker.baseSalary || 700));
+        const calculatedNet = fullDayPay + halfDayPay + calculatedOvertimePay;
 
         // Upsert Payroll
         const payroll = await Payroll.findOneAndUpdate(
           { workerId: worker._id, month, year },
           {
             presentDays: present,
+            halfDays: halfDays,
             absentDays: absent,
-            baseSalary: worker.baseSalary,
+            baseSalary: worker.baseSalary || 700,
             overtime: calculatedOvertimePay,
             netSalary: Math.max(0, calculatedNet),
-            // bonus, deductions can be updated later via PUT
           },
           { returnDocument: 'after', upsert: true }
         );
@@ -83,6 +93,19 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
         errors.push({ workerId: worker._id, error: err.message });
       }
     }
+
+    await logAudit({
+      performedBy: req.user,
+      actionType: 'PAYROLL_GENERATE',
+      targetEntity: {
+        entityType: 'Payroll',
+        entityId: `${month}-${year}`,
+        name: `Payroll for ${MONTH_NAMES[month - 1]} ${year}`
+      },
+      previousState: null,
+      newState: { month, year, processedCount: results.length, siteId },
+      details: `Monthly payroll generated for ${results.length} workers (${MONTH_NAMES[month - 1]} ${year}) by ${req.user.name}`
+    });
 
     res.status(200).json({ message: 'Payroll generation complete', results, errors });
   } catch (error) {
@@ -101,7 +124,10 @@ router.get('/', protect, adminOnly, async (req, res) => {
   if (workerId) query.workerId = workerId;
 
   try {
-    const payrolls = await Payroll.find(query).populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite').populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
+    const payrolls = await Payroll.find(query)
+      .populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite')
+      .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
+      
     let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
     
     if (req.user.role === 'Supervisor') {
@@ -129,10 +155,6 @@ router.get('/', protect, adminOnly, async (req, res) => {
 const PDFDocument = require('pdfkit');
 const { drawPayslip } = require('../utils/pdfHelper');
 
-
-
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-
 // @desc    Download single payslip PDF
 // @route   GET /api/payroll/pdf/:id
 // @access  Private/Admin or Supervisor
@@ -151,7 +173,7 @@ router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
     }
 
     const monthName = MONTH_NAMES[payroll.month - 1];
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=Payslip_${payroll.workerId.employeeId}_${monthName}_${payroll.year}.pdf`);
@@ -190,7 +212,7 @@ router.get('/pdf-all', protect, adminOnly, async (req, res) => {
     if (validPayrolls.length === 0) return res.status(404).json({ message: 'No valid payroll records found for this month' });
 
     const monthName = MONTH_NAMES[parseInt(month) - 1];
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=All_Payslips_${monthName}_${year}.pdf`);
@@ -272,8 +294,22 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
       return res.status(404).json({ message: 'Payroll not found' });
     }
 
+    const prevStatus = payroll.status;
     payroll.status = status;
     await payroll.save();
+
+    await logAudit({
+      performedBy: req.user,
+      actionType: 'PAYROLL_UPDATE',
+      targetEntity: {
+        entityType: 'Payroll',
+        entityId: payroll._id.toString(),
+        name: `Payroll ${payroll._id}`
+      },
+      previousState: { status: prevStatus },
+      newState: { status },
+      details: `Payroll status updated from ${prevStatus} to ${status} by ${req.user.name}`
+    });
 
     res.json({ message: 'Payroll status updated successfully', payroll });
   } catch (error) {
@@ -282,5 +318,3 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
 });
 
 module.exports = router;
-
-

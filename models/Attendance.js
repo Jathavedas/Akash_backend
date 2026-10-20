@@ -4,9 +4,9 @@ const attendanceSchema = new mongoose.Schema({
   workerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', required: true },
   siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site', required: true },
   date: { type: Date, required: true },
-  status: { type: String, enum: ['Present', 'Absent'], required: true },
+  status: { type: String, enum: ['Present', 'Absent', 'Half Day'], required: true },
   overtimeHours: { type: Number, default: 0 },
-  markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Admin or Supervisor who marked it
+  markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Admin, Manager, or Supervisor who marked it
 }, { timestamps: true });
 
 // Prevent duplicate attendance entry for same worker on same day

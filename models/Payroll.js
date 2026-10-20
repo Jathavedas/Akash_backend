@@ -7,6 +7,7 @@ const payrollSchema = new mongoose.Schema({
   
   // Stats for the month
   presentDays: { type: Number, default: 0 },
+  halfDays: { type: Number, default: 0 },
   absentDays: { type: Number, default: 0 },
   
   // Financial specifics

@@ -121,6 +121,8 @@ router.get('/payroll-trends', protect, adminOnly, async (req, res) => {
         avgDailyRate: Math.round(avgDailyRate),
         accumulatedPayoutSoFar: Math.round(currentAccumulatedNet),
         projectedTotalPayout,
+        projectedTotalWages: projectedTotalPayout,
+        projectedBaseWages: Math.max(0, projectedTotalPayout - projectedOvertime),
         accumulatedOvertimeSoFar: Math.round(currentAccumulatedOt),
         projectedOvertime
       }

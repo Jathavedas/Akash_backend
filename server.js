@@ -32,13 +32,15 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(null, true); // Permissive for enterprise field testing
-    }
-  }
+  // origin: function (origin, callback) {
+  //   if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+  //     callback(null, true);
+  //   } else {
+  //     callback(null, true); // Permissive for enterprise field testing
+  //   }
+  // }
+  origin: '*',
+
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

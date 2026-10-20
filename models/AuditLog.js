@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 
 const auditLogSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now, index: true },
@@ -19,12 +19,15 @@ const auditLogSchema = new mongoose.Schema({
       'WORKER_UPDATE',
       'WORKER_DELETE',
       'ATTENDANCE_OVERRIDE',
-      'NAME_CORRECTION'
+      'ATTENDANCE_MARK',
+      'NAME_CORRECTION',
+      'PAYROLL_GENERATE',
+      'PAYROLL_UPDATE'
     ],
     index: true
   },
   targetEntity: {
-    entityType: { type: String }, // 'Worker', 'Site', 'Attendance', 'TransferRequest'
+    entityType: { type: String }, // 'Worker', 'Site', 'Attendance', 'TransferRequest', 'Payroll'
     entityId: { type: String },
     name: { type: String }
   },
