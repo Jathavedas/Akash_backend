@@ -14,7 +14,6 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 // @access  Private/Admin
 router.post('/generate', protect, adminOnly, async (req, res) => {
   const { month, year, workerIds, siteId } = req.body;
-  // workerIds can be 'all' or an array of specific IDs
 
   if (!month || !year) {
     return res.status(400).json({ message: 'Month and year are required' });
@@ -68,11 +67,18 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
           }
         });
 
+        // Preserve existing deductions & bonus if previously set
+        const existingPayroll = await Payroll.findOne({ workerId: worker._id, month, year });
+        const existingAdvance = existingPayroll?.advanceDeduction || 0;
+        const existingBonus = existingPayroll?.bonus || 0;
+        const existingOther = existingPayroll?.otherDeduction || 0;
+
         const hourlyRate = (worker.baseSalary || 700) / 8;
         const calculatedOvertimePay = Math.round(totalOvertimeHours * hourlyRate);
         const halfDayPay = Math.round(halfDays * ((worker.baseSalary || 700) * 0.5));
         const fullDayPay = Math.round(present * (worker.baseSalary || 700));
-        const calculatedNet = fullDayPay + halfDayPay + calculatedOvertimePay;
+        const grossEarnings = fullDayPay + halfDayPay + calculatedOvertimePay + existingBonus;
+        const calculatedNet = Math.max(0, grossEarnings - existingAdvance - existingOther);
 
         // Upsert Payroll
         const payroll = await Payroll.findOneAndUpdate(
@@ -83,7 +89,10 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
             absentDays: absent,
             baseSalary: worker.baseSalary || 700,
             overtime: calculatedOvertimePay,
-            netSalary: Math.max(0, calculatedNet),
+            advanceDeduction: existingAdvance,
+            bonus: existingBonus,
+            otherDeduction: existingOther,
+            netSalary: calculatedNet,
           },
           { returnDocument: 'after', upsert: true }
         );
@@ -146,6 +155,74 @@ router.get('/', protect, adminOnly, async (req, res) => {
     }
     
     res.json(validPayrolls);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Update advance deduction and recalculate net salary for a worker's payslip
+// @route   PUT /api/payroll/:id/advance
+// @access  Private/Admin
+router.put('/:id/advance', protect, adminOnly, async (req, res) => {
+  try {
+    const { advanceDeduction, otherDeduction, bonus } = req.body;
+
+    const payroll = await Payroll.findById(req.params.id)
+      .populate('workerId', 'firstName lastName employeeId designation assignedSite');
+      
+    if (!payroll) {
+      return res.status(404).json({ message: 'Payroll record not found' });
+    }
+
+    const previousState = {
+      advanceDeduction: payroll.advanceDeduction,
+      otherDeduction: payroll.otherDeduction,
+      bonus: payroll.bonus,
+      netSalary: payroll.netSalary
+    };
+
+    if (advanceDeduction !== undefined) {
+      payroll.advanceDeduction = Math.max(0, Number(advanceDeduction) || 0);
+    }
+    if (otherDeduction !== undefined) {
+      payroll.otherDeduction = Math.max(0, Number(otherDeduction) || 0);
+    }
+    if (bonus !== undefined) {
+      payroll.bonus = Math.max(0, Number(bonus) || 0);
+    }
+
+    // Recalculate Net Salary: Gross (Full + Half + OT + Bonus) - Advance - Other
+    const baseSalary = payroll.baseSalary || 700;
+    const fullDayPay = Math.round((payroll.presentDays || 0) * baseSalary);
+    const halfDayPay = Math.round((payroll.halfDays || 0) * (baseSalary * 0.5));
+    const overtimePay = Math.round(payroll.overtime || 0);
+    const bonusPay = Math.round(payroll.bonus || 0);
+    const grossEarnings = fullDayPay + halfDayPay + overtimePay + bonusPay;
+
+    payroll.netSalary = Math.max(0, Math.round(grossEarnings - (payroll.advanceDeduction || 0) - (payroll.otherDeduction || 0)));
+    const updated = await payroll.save();
+
+    const populated = await Payroll.findById(updated._id)
+      .populate('workerId', 'firstName lastName employeeId designation assignedSite')
+      .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
+
+    await logAudit({
+      performedBy: req.user,
+      actionType: 'PAYROLL_UPDATE',
+      targetEntity: {
+        entityType: 'Payroll',
+        entityId: payroll._id.toString(),
+        name: `Payroll for ${payroll.workerId?.firstName || 'Worker'} (${payroll.month}/${payroll.year})`
+      },
+      previousState,
+      newState: {
+        advanceDeduction: updated.advanceDeduction,
+        netSalary: updated.netSalary
+      },
+      details: `Advance deduction of ₹${updated.advanceDeduction} applied for ${payroll.workerId?.firstName} ${payroll.workerId?.lastName}. Net salary recalculated from ₹${previousState.netSalary} to ₹${updated.netSalary} by ${req.user.name}`
+    });
+
+    res.json({ message: 'Advance deduction updated and net salary adjusted successfully', payroll: populated });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -250,7 +327,6 @@ router.post('/send-emails', protect, adminOnly, async (req, res) => {
       return res.status(400).json({ message: 'No eligible workers with email addresses found.' });
     }
 
-    // Process synchronously so we can return errors to the frontend
     const errors = [];
     let successCount = 0;
     const monthName = MONTH_NAMES[parseInt(month) - 1];

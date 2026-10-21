@@ -29,15 +29,32 @@ router.get('/', protect, staffOnly, async (req, res) => {
   try {
     let query = {};
     
-    // If Supervisor, forcefully restrict strictly to assigned site
-    if (req.user.role === 'Supervisor') {
-      if (!req.user.assignedSite) {
-        return res.status(403).json({ message: 'No site assigned to this supervisor' });
-      }
-      query.assignedSite = req.user.assignedSite;
-    } else if (req.query.site) {
-      // Admin/Manager filtering by site: strictly show workers whose assignedSite matches this site
-      query.assignedSite = req.query.site;
+    // Identify target site if supervisor or filtered by site
+    const targetSiteId = req.user.role === 'Supervisor' 
+      ? (req.user.assignedSite?._id || req.user.assignedSite) 
+      : req.query.site;
+
+    let siteCondition = null;
+    if (targetSiteId) {
+      siteCondition = {
+        $or: [
+          // 1. Worker permanently assigned here AND not actively transferred out to a different pending site
+          {
+            assignedSite: targetSiteId,
+            $or: [
+              { transferStatus: { $ne: 'Pending' } },
+              { pendingSite: targetSiteId },
+              { pendingSite: null },
+              { pendingSite: { $exists: false } }
+            ]
+          },
+          // 2. Worker has an active pending transfer TO this site (supervisor can give attendance immediately!)
+          {
+            pendingSite: targetSiteId,
+            transferStatus: 'Pending'
+          }
+        ]
+      };
     }
 
     // Optional status filter
@@ -46,20 +63,24 @@ router.get('/', protect, staffOnly, async (req, res) => {
     // Optional search filter
     if (req.query.search) {
       const searchRegex = new RegExp(req.query.search, 'i');
-      const searchCondition = [
-        { firstName: searchRegex },
-        { lastName: searchRegex },
-        { employeeId: searchRegex },
-        { phoneNumber: searchRegex }
-      ];
-      if (query.assignedSite) {
-        query = {
-          assignedSite: query.assignedSite,
-          $or: searchCondition
-        };
+      const searchCondition = {
+        $or: [
+          { firstName: searchRegex },
+          { lastName: searchRegex },
+          { employeeId: searchRegex },
+          { phoneNumber: searchRegex }
+        ]
+      };
+      if (siteCondition) {
+        query.$and = [
+          siteCondition,
+          searchCondition
+        ];
       } else {
-        query.$or = searchCondition;
+        query.$or = searchCondition.$or;
       }
+    } else if (siteCondition) {
+      Object.assign(query, siteCondition);
     }
 
     let workers = await Worker.find(query)

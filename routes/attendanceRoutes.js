@@ -212,6 +212,7 @@ router.post('/bulk', protect, staffOnly, async (req, res) => {
           }
 
           existing.status = newStatus;
+          existing.siteId = siteId; // Crucial: ensure siteId reflects the site marking today!
           existing.overtimeHours = newOt;
           existing.markedBy = req.user._id;
           await existing.save();
@@ -307,7 +308,7 @@ router.get('/', protect, staffOnly, async (req, res) => {
     const attendances = await Attendance.find({ 
       siteId, 
       date: targetDate 
-    }).populate('workerId', 'firstName lastName employeeId designation phoneNumber assignedSite');
+    }).populate('workerId', 'firstName lastName employeeId designation phoneNumber assignedSite pendingSite transferStatus');
 
     res.json(attendances);
   } catch (error) {
@@ -384,13 +385,16 @@ router.get('/today-summary', protect, managerOrAdmin, async (req, res) => {
     const queryDate = new Date(targetDateStr);
     queryDate.setUTCHours(0, 0, 0, 0);
 
-    const workers = await Worker.find({ status: 'Active' }).populate('assignedSite', 'name');
+    const workers = await Worker.find({ status: 'Active' })
+      .populate('assignedSite', 'name')
+      .populate('pendingSite', 'name');
     const attendances = await Attendance.find({ date: queryDate });
 
     const siteMap = {};
 
     workers.forEach(w => {
-      const site = w.assignedSite;
+      // If worker has a pending transfer, they are active at pendingSite
+      const site = (w.transferStatus === 'Pending' && w.pendingSite) ? w.pendingSite : w.assignedSite;
       if (!site) return;
       const siteId = site._id.toString();
       if (!siteMap[siteId]) {

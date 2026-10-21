@@ -1,6 +1,6 @@
-﻿require('dotenv').config();
-const express = require('express');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const apiRoutes = require('./routes/api');
@@ -13,6 +13,7 @@ const userRoutes = require('./routes/userRoutes');
 const transferRoutes = require('./routes/transferRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+const materialRoutes = require('./routes/materialRoutes');
 
 // Initialize background jobs
 require('./cron/payrollCron');
@@ -32,15 +33,7 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  // origin: function (origin, callback) {
-  //   if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-  //     callback(null, true);
-  //   } else {
-  //     callback(null, true); // Permissive for enterprise field testing
-  //   }
-  // }
   origin: '*',
-
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -59,6 +52,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/transfers', transferRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/materials', materialRoutes);
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {

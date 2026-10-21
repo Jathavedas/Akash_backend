@@ -57,8 +57,21 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     });
 
     if (existingPending) {
-      return res.status(400).json({ message: 'A pending transfer request already exists for this worker at this site' });
+      worker.transferStatus = 'Pending';
+      worker.pendingSite = targetSiteId;
+      await worker.save();
+      return res.status(200).json({ 
+        message: 'Worker is already active on your site roster with "Transfer Pending" status. You can mark their attendance immediately without waiting for manager approval!',
+        transferRequest: existingPending,
+        worker
+      });
     }
+
+    // Supersede any older pending transfer for this worker to a different site
+    await TransferRequest.updateMany(
+      { workerId: worker._id, status: 'Pending' },
+      { status: 'Superseded' }
+    );
 
     const previousState = {
       assignedSite: worker.assignedSite?._id,
@@ -76,7 +89,7 @@ router.post('/request', protect, staffOnly, async (req, res) => {
       notes: notes || 'Field cross-site deployment'
     });
 
-    // Mark worker with pending transfer immediately
+    // Mark worker with pending transfer immediately so supervisor can take attendance right away
     worker.transferStatus = 'Pending';
     worker.pendingSite = targetSiteId;
     await worker.save();
@@ -96,11 +109,11 @@ router.post('/request', protect, staffOnly, async (req, res) => {
         pendingSite: targetSiteId,
         targetSiteName: targetSite.name
       },
-      details: `Transfer requested to site "${targetSite.name}" by ${req.user.name}`
+      details: `Transfer requested to site "${targetSite.name}" by ${req.user.name}. Attendance authorized immediately.`
     });
 
     res.status(201).json({
-      message: 'Worker added to site roster with status "Transfer Pending"',
+      message: 'Worker added to site roster with status "Transfer Pending". You can mark their attendance today immediately! Manager will approve according to availability.',
       transferRequest,
       worker
     });
