@@ -154,6 +154,10 @@ router.post('/bulk', protect, staffOnly, async (req, res) => {
     const isManager = req.user.role === 'Manager';
     const isAdmin = req.user.role === 'Admin';
 
+    // Parse date ensuring UTC midnight
+    const targetDate = new Date(date);
+    targetDate.setUTCHours(0, 0, 0, 0);
+
     // Validate site access for Supervisors
     if (isSupervisor) {
       if (!req.user.assignedSite || req.user.assignedSite.toString() !== siteId) {
@@ -165,19 +169,30 @@ router.post('/bulk', protect, staffOnly, async (req, res) => {
         return res.status(403).json({ message: 'Supervisors can only mark attendance for today. Historical edits require Admin or Manager authorization.' });
       }
 
-      // Check for 9:30 AM IST deadline
+      // Check for 9:30 AM IST deadline: Only Present has a time limit, Absent has NO time limit
       const now = new Date();
       const istTime = new Date(now.getTime() + (330 * 60000));
       const hours = istTime.getUTCHours();
       const minutes = istTime.getUTCMinutes();
-      if (hours > 9 || (hours === 9 && minutes > 30)) {
-        return res.status(403).json({ message: 'Attendance marking closed after 9:30 AM for supervisors' });
+      const isPastDeadline = hours > 9 || (hours === 9 && minutes >= 30);
+
+      if (isPastDeadline) {
+        // After 9:30 AM, supervisors can mark Absent, but cannot newly mark Present
+        for (let record of attendances) {
+          if (record.status === 'Present') {
+            const existing = await Attendance.findOne({
+              workerId: record.workerId,
+              date: targetDate
+            });
+            if (!existing || existing.status !== 'Present') {
+              return res.status(403).json({ 
+                message: 'Marking "Present" is restricted after 9:30 AM for supervisors. You can still mark workers as "Absent".' 
+              });
+            }
+          }
+        }
       }
     }
-
-    // Parse date ensuring UTC midnight
-    const targetDate = new Date(date);
-    targetDate.setUTCHours(0, 0, 0, 0);
 
     const attendanceRecords = [];
     const errors = [];
