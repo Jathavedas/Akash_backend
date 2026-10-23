@@ -79,6 +79,73 @@ router.put('/self-edit-name', async (req, res) => {
   }
 });
 
+// @desc    Self-Service Worker Email Update
+// @route   PUT /api/attendance/self-edit-email
+// @access  Public (Verified by registered phone number)
+router.put('/self-edit-email', async (req, res) => {
+  try {
+    const { phoneNumber, email } = req.body;
+
+    if (!phoneNumber) {
+      return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    if (email === undefined || email === null) {
+      return res.status(400).json({ message: 'Email address is required' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (cleanEmail && !emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ 
+        message: 'Invalid email address format. Please enter a valid email (e.g. worker@example.com).' 
+      });
+    }
+
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const worker = await Worker.findOne({ phoneNumber: cleanPhone });
+
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker profile not found for this mobile number' });
+    }
+
+    const previousEmail = worker.email || '';
+    worker.email = cleanEmail;
+    await worker.save();
+
+    await logAudit({
+      performedBy: {
+        name: `${worker.firstName} ${worker.lastName}`,
+        role: 'Field Worker Self-Service'
+      },
+      actionType: 'EMAIL_UPDATE',
+      targetEntity: {
+        entityType: 'Worker',
+        entityId: worker._id.toString(),
+        name: `${worker.firstName} ${worker.lastName} (${worker.employeeId || 'No ID'})`
+      },
+      previousState: { email: previousEmail },
+      newState: { email: cleanEmail },
+      details: `Worker self-service updated email from "${previousEmail || 'None'}" to "${cleanEmail || 'None'}"`
+    });
+
+    res.json({
+      message: 'Email address updated successfully',
+      worker: {
+        _id: worker._id,
+        firstName: worker.firstName,
+        lastName: worker.lastName,
+        name: `${worker.firstName} ${worker.lastName}`,
+        employeeId: worker.employeeId,
+        email: worker.email || ''
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // @desc    Get worker monthly attendance calendar (Public or Self lookup)
 // @route   GET /api/attendance/calendar/:identifier
 // @access  Public
@@ -130,6 +197,7 @@ router.get('/calendar/:identifier', async (req, res) => {
         name: `${worker.firstName} ${worker.lastName}`,
         employeeId: worker.employeeId,
         phoneNumber: worker.phoneNumber,
+        email: worker.email || '',
         designation: worker.designation,
         site: worker.assignedSite ? worker.assignedSite.name : null
       },

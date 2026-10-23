@@ -134,7 +134,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 
   try {
     const payrolls = await Payroll.find(query)
-      .populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite')
+      .populate('workerId', 'firstName lastName employeeId designation salaryType phoneNumber assignedSite email')
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
       
     let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
@@ -168,7 +168,7 @@ router.put('/:id/advance', protect, adminOnly, async (req, res) => {
     const { advanceDeduction, otherDeduction, bonus } = req.body;
 
     const payroll = await Payroll.findById(req.params.id)
-      .populate('workerId', 'firstName lastName employeeId designation assignedSite');
+      .populate('workerId', 'firstName lastName employeeId designation assignedSite email');
       
     if (!payroll) {
       return res.status(404).json({ message: 'Payroll record not found' });
@@ -203,7 +203,7 @@ router.put('/:id/advance', protect, adminOnly, async (req, res) => {
     const updated = await payroll.save();
 
     const populated = await Payroll.findById(updated._id)
-      .populate('workerId', 'firstName lastName employeeId designation assignedSite')
+      .populate('workerId', 'firstName lastName employeeId designation assignedSite email')
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
     await logAudit({
@@ -271,7 +271,11 @@ router.get('/pdf-all', protect, adminOnly, async (req, res) => {
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {
-    const payrolls = await Payroll.find({ month: parseInt(month), year: parseInt(year) })
+    const query = { month: parseInt(month), year: parseInt(year) };
+    if (payrollIds && Array.isArray(payrollIds) && payrollIds.length > 0) {
+      query._id = { $in: payrollIds };
+    }
+    const payrolls = await Payroll.find(query)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
     let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
@@ -314,7 +318,7 @@ const { sendPayslipEmail } = require('../utils/emailService');
 // @route   POST /api/payroll/send-emails
 // @access  Private/Admin
 router.post('/send-emails', protect, adminOnly, async (req, res) => {
-  const { month, year } = req.body;
+  const { month, year, payrollIds } = req.body;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {
@@ -392,5 +396,71 @@ router.put('/:id/status', protect, adminOnly, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
+
+// @desc    Send a single payslip PDF to a worker via email (Resend)
+// @route   POST /api/payroll/:id/send-email
+// @access  Private/Admin
+router.post('/:id/send-email', protect, adminOnly, async (req, res) => {
+  try {
+    const payroll = await Payroll.findById(req.params.id)
+      .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
+
+    if (!payroll || !payroll.workerId) {
+      return res.status(404).json({ message: 'Payroll record or associated worker not found' });
+    }
+
+        // Allow updating worker email if provided in request body
+    const { email } = req.body;
+    if (email && email.trim()) {
+      const cleanEmail = email.trim();
+      await Worker.findByIdAndUpdate(payroll.workerId._id, { email: cleanEmail });
+      payroll.workerId.email = cleanEmail;
+    }
+
+    if (!payroll.workerId.email) {
+      return res.status(400).json({ 
+        message: `Worker ${payroll.workerId.firstName} ${payroll.workerId.lastName || ''} has no registered email. Please provide an email address.` 
+      });
+    }
+
+    const monthName = MONTH_NAMES[payroll.month - 1];
+    const pdfBuffer = await generatePayslipBuffer(payroll, monthName, payroll.year);
+    
+    await sendPayslipEmail(payroll.workerId, pdfBuffer, monthName, payroll.year);
+
+    try {
+      await logAudit({
+        performedBy: req.user,
+        actionType: 'PAYROLL_EMAIL_SENT',
+        targetEntity: {
+          entityType: 'Payroll',
+          entityId: payroll._id.toString(),
+          name: `Payslip for ${payroll.workerId.firstName} ${payroll.workerId.lastName || ''} (${monthName} ${payroll.year})`
+        },
+        previousState: null,
+        newState: { 
+          recipient: payroll.workerId.email, 
+          month: payroll.month, 
+          year: payroll.year,
+          netSalary: payroll.netSalary 
+        },
+        details: `Payslip PDF for ${monthName} ${payroll.year} successfully emailed to ${payroll.workerId.email} by ${req.user.name}`
+      });
+    } catch (auditErr) {
+      console.warn('Non-fatal: Audit log creation failed for payslip email:', auditErr.message);
+    }
+
+    res.json({ 
+      message: `Payslip successfully emailed to ${payroll.workerId.email}`,
+      workerId: payroll.workerId._id,
+      email: payroll.workerId.email,
+    });
+  } catch (error) {
+    console.error('Error sending single payslip email:', error);
+    res.status(500).json({ message: error.message || 'Failed to send payslip email' });
+  }
+});
+
 
 module.exports = router;
