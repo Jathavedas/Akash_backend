@@ -25,6 +25,7 @@ async function sendPayslipEmail(worker, pdfBuffer, monthName, year) {
     const resend = new Resend(process.env.RESEND_API_KEY);
     const fromAddress = process.env.RESEND_FROM || 'Coolnest Payroll <onboarding@resend.dev>';
 
+    
     const htmlContent = `
       <!DOCTYPE html>
       <html>
