@@ -23,7 +23,7 @@ async function sendPayslipEmail(worker, pdfBuffer, monthName, year) {
   // 1. Resend (Primary: uses HTTPS REST API, 100% works on Render)
   if (process.env.RESEND_API_KEY) {
     const resend = new Resend(process.env.RESEND_API_KEY);
-    const fromAddress = process.env.RESEND_FROM || 'Coolnest Payroll <onboarding@resend.dev>';
+    const fromAddress = process.env.RESEND_FROM || 'Coolnest Payroll <payroll@coolnestengineering.in>';
 
     
     const htmlContent = `

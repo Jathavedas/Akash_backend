@@ -322,7 +322,11 @@ router.post('/send-emails', protect, adminOnly, async (req, res) => {
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {
-    const payrolls = await Payroll.find({ month: parseInt(month), year: parseInt(year) })
+    const query = { month: parseInt(month), year: parseInt(year) };
+    if (payrollIds && Array.isArray(payrollIds) && payrollIds.length > 0) {
+      query._id = { $in: payrollIds };
+    }
+    const payrolls = await Payroll.find(query)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
     const eligibleWorkers = payrolls.filter(pr => pr.workerId && pr.workerId.email);
