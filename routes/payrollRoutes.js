@@ -267,7 +267,7 @@ router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
 // @route   GET /api/payroll/pdf-all?month=X&year=Y
 // @access  Private/Admin or Supervisor
 router.get('/pdf-all', protect, adminOnly, async (req, res) => {
-  const { month, year } = req.query;
+  const { month, year, payrollIds } = req.query;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {

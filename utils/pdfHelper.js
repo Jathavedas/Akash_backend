@@ -1,3 +1,5 @@
+
+
 const PDFDocument = require('pdfkit');
 
 function formatCurrency(amount) {
@@ -57,19 +59,19 @@ function drawPayslip(doc, pr, monthName, year) {
   let lineY = workerCardY + 10;
 
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Worker Name:', col1X, lineY);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(textDark).text(`${w.firstName || ''} ${w.lastName || ''}`.trim() || 'N/A', col1ValX, lineY);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(textDark).text(`${w.firstName || ''} ${w.lastName || ''}`.trim() || 'N/A', col1ValX, lineY, { width: 155, ellipsis: true });
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Employee ID:', col1X, lineY);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(primaryNavy).text(w.employeeId || 'N/A', col1ValX, lineY);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(primaryNavy).text(w.employeeId || 'N/A', col1ValX, lineY, { width: 155, ellipsis: true });
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Designation:', col1X, lineY);
-  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.designation || 'General Labour', col1ValX, lineY);
+  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.designation || 'General Labour', col1ValX, lineY, { width: 155, ellipsis: true });
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Skill Category:', col1X, lineY);
-  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.skillCategory || 'Standard', col1ValX, lineY);
+  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.skillCategory || 'Standard', col1ValX, lineY, { width: 155, ellipsis: true });
 
   // Right Column (Worksite & Financial Terms)
   const col2X = leftMargin + Math.floor(contentWidth / 2) + 10;
@@ -81,15 +83,15 @@ function drawPayslip(doc, pr, monthName, year) {
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Mobile Number:', col2X, lineY);
-  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.phoneNumber || 'N/A', col2ValX, lineY);
+  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text(w.phoneNumber || 'N/A', col2ValX, lineY, { width: 170, ellipsis: true });
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Salary Structure:', col2X, lineY);
-  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text('Daily Wage Rate', col2ValX, lineY);
+  doc.font('Helvetica').fontSize(8.5).fillColor(textDark).text('Daily Wage Rate', col2ValX, lineY, { width: 170, ellipsis: true });
 
   lineY += 16;
   doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textMuted).text('Daily Base Rate:', col2X, lineY);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(emeraldText).text(`${formatCurrency(pr.baseSalary)} / day`, col2ValX, lineY);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(emeraldText).text(`${formatCurrency(pr.baseSalary)} / day`, col2ValX, lineY, { width: 170, ellipsis: true });
 
   // --- 4. Attendance Metrics Four-Pill Summary ---
   const attY = workerCardY + workerCardHeight + 12;
@@ -169,11 +171,11 @@ function drawPayslip(doc, pr, monthName, year) {
     const bg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
     doc.rect(leftMargin, currentY, contentWidth, rowHeight).fillAndStroke(bg, cardBorder);
 
-    doc.fontSize(8.5).font('Helvetica').fillColor(textDark).text(r.label, leftMargin + 14, currentY + 6);
-    doc.fontSize(8).font('Helvetica').fillColor(textMuted).text(r.calc, leftMargin + 250, currentY + 6);
+    doc.fontSize(8.5).font('Helvetica').fillColor(textDark).text(r.label, leftMargin + 14, currentY + 6, { width: 220, ellipsis: true, lineBreak: false });
+    doc.fontSize(8).font('Helvetica').fillColor(textMuted).text(r.calc, leftMargin + 250, currentY + 6, { width: 180, ellipsis: true, lineBreak: false });
 
     const amtColor = r.isEarning ? (r.amt.startsWith('Rs. 0') ? textMuted : '#047857') : (r.amt.includes('- Rs. 0') ? textMuted : '#b91c1c');
-    doc.fontSize(8.5).font('Helvetica-Bold').fillColor(amtColor).text(r.amt, rightMargin - 110, currentY + 6, { width: 100, align: 'right' });
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor(amtColor).text(r.amt, rightMargin - 110, currentY + 6, { width: 100, align: 'right', lineBreak: false });
 
     currentY += rowHeight;
   });
@@ -181,9 +183,9 @@ function drawPayslip(doc, pr, monthName, year) {
   // Summary Row: Gross and Deductions
   doc.rect(leftMargin, currentY, contentWidth, 24).fillAndStroke('#f1f5f9', '#cbd5e1');
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor(textDark)
-     .text(`Gross Earnings: ${formatCurrency(grossEarnings)}`, leftMargin + 14, currentY + 7);
+     .text(`Gross Earnings: ${formatCurrency(grossEarnings)}`, leftMargin + 14, currentY + 7, { lineBreak: false });
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#b91c1c')
-     .text(`Total Deductions: - ${formatCurrency(totalDeductions)}`, rightMargin - 220, currentY + 7, { width: 210, align: 'right' });
+     .text(`Total Deductions: - ${formatCurrency(totalDeductions)}`, rightMargin - 220, currentY + 7, { width: 210, align: 'right', lineBreak: false });
 
   currentY += 24;
 
@@ -194,13 +196,13 @@ function drawPayslip(doc, pr, monthName, year) {
      .fillAndStroke(primaryDark, primaryNavy);
 
   doc.fontSize(10).font('Helvetica-Bold').fillColor('#94a3b8')
-     .text('NET SALARY DISBURSEMENT', leftMargin + 18, currentY + 11);
+     .text('NET SALARY DISBURSEMENT', leftMargin + 18, currentY + 11, { lineBreak: false });
   doc.fontSize(7.5).font('Helvetica').fillColor('#64748b')
-     .text('Payable via verified direct company payment', leftMargin + 18, currentY + 25);
+     .text('Payable via verified direct company payment', leftMargin + 18, currentY + 25, { lineBreak: false });
 
   const netPayable = pr.netSalary !== undefined ? pr.netSalary : (grossEarnings - totalDeductions);
   doc.fontSize(16).font('Helvetica-Bold').fillColor('#38bdf8')
-     .text(formatCurrency(Math.max(0, netPayable)), rightMargin - 230, currentY + 13, { width: 216, align: 'right' });
+     .text(formatCurrency(Math.max(0, netPayable)), rightMargin - 230, currentY + 13, { width: 216, align: 'right', lineBreak: false });
 
   currentY += netHeight + 20;
 
@@ -210,22 +212,28 @@ function drawPayslip(doc, pr, monthName, year) {
 
   // Employer Verification
   doc.moveTo(leftMargin, sigY + 36).lineTo(leftMargin + sigBoxW, sigY + 36).strokeColor(textMuted).lineWidth(0.8).stroke();
-  doc.fontSize(8).font('Helvetica-Bold').fillColor(textDark).text('COOLNEST ENGINEERING SOLUTIONS', leftMargin, sigY + 42);
-  doc.fontSize(7).font('Helvetica').fillColor(textMuted).text('Authorised Human Resources & Accounts Signatory', leftMargin, sigY + 52);
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(textDark).text('COOLNEST ENGINEERING SOLUTIONS', leftMargin, sigY + 42, { lineBreak: false });
+  doc.fontSize(7).font('Helvetica').fillColor(textMuted).text('Authorised Human Resources & Accounts Signatory', leftMargin, sigY + 52, { lineBreak: false });
 
   // Employee Acknowledgement
   const rightSigX = rightMargin - sigBoxW;
   doc.moveTo(rightSigX, sigY + 36).lineTo(rightMargin, sigY + 36).strokeColor(textMuted).lineWidth(0.8).stroke();
-  doc.fontSize(8).font('Helvetica-Bold').fillColor(textDark).text('WORKER ACKNOWLEDGEMENT', rightSigX, sigY + 42);
-  doc.fontSize(7).font('Helvetica').fillColor(textMuted).text('Signature / Date of Receipt Confirmation', rightSigX, sigY + 52);
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(textDark).text('WORKER ACKNOWLEDGEMENT', rightSigX, sigY + 42, { lineBreak: false });
+  doc.fontSize(7).font('Helvetica').fillColor(textMuted).text('Signature / Date of Receipt Confirmation', rightSigX, sigY + 52, { lineBreak: false });
 
   // --- 8. Executive Footer & System Seal ---
-  const footerY = doc.page.height - 35;
+  // Temporarily disable bottom margin so footer near page bottom never triggers an auto-pagebreak
+  const originalBottomMargin = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+
+  const footerY = doc.page.height - 45;
   doc.moveTo(leftMargin, footerY - 8).lineTo(rightMargin, footerY - 8).strokeColor(cardBorder).lineWidth(0.5).stroke();
   doc.fontSize(7).font('Helvetica').fillColor(textMuted)
-     .text('This is an official computer-generated document issued by Coolnest Workforce Operations ERP. No physical stamp required.', leftMargin, footerY, { align: 'center', width: contentWidth });
+     .text('This is an official computer-generated document issued by Coolnest Workforce Operations ERP. No physical stamp required.', leftMargin, footerY, { align: 'center', width: contentWidth, lineBreak: false });
   doc.fontSize(6.5).font('Helvetica').fillColor('#94a3b8')
-     .text(`Generated on: ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} | Status: ${pr.status || 'Approved'}`, leftMargin, footerY + 11, { align: 'center', width: contentWidth });
+     .text(`Generated on: ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} | Status: ${pr.status || 'Approved'}`, leftMargin, footerY + 11, { align: 'center', width: contentWidth, lineBreak: false });
+
+  doc.page.margins.bottom = originalBottomMargin;
 }
 
 function generatePayslipBuffer(pr, monthName, year) {
