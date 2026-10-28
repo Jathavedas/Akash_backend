@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly } = require('../middlewares/roleMiddleware');
+const { validateEmail } = require('../utils/emailHelper');
 
 // @desc    Get all users (excluding passwords)
 // @route   GET /api/users
@@ -37,15 +38,20 @@ router.post('/', protect, adminOnly, async (req, res) => {
   const { name, email, password, role, assignedSite } = req.body;
 
   try {
-    const userExists = await User.findOne({ email });
+    const emailValidation = validateEmail(email, { required: true, fieldName: 'Work email' });
+    if (!emailValidation.isValid) {
+      return res.status(400).json({ message: emailValidation.error });
+    }
+    const cleanEmail = emailValidation.normalized;
 
+    const userExists = await User.findOne({ email: cleanEmail });
     if (userExists) {
-      return res.status(400).json({ message: 'User already exists' });
+      return res.status(400).json({ message: 'User with this email already exists' });
     }
 
     const user = await User.create({
       name,
-      email,
+      email: cleanEmail,
       password,
       role: role || 'Supervisor',
       assignedSite: assignedSite || null
@@ -76,7 +82,19 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
 
     if (user) {
       user.name = req.body.name || user.name;
-      user.email = req.body.email || user.email;
+      
+      if (req.body.email) {
+        const emailValidation = validateEmail(req.body.email, { required: true, fieldName: 'Work email' });
+        if (!emailValidation.isValid) {
+          return res.status(400).json({ message: emailValidation.error });
+        }
+        const cleanEmail = emailValidation.normalized;
+        const duplicate = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+        if (duplicate) {
+          return res.status(409).json({ message: 'Another user already exists with this email address' });
+        }
+        user.email = cleanEmail;
+      }
       user.role = req.body.role || user.role;
       user.assignedSite = req.body.assignedSite || user.assignedSite;
 

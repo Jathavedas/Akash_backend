@@ -1,12 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const Worker = require('../models/Worker');
+const Site = require('../models/Site');
 const Payroll = require('../models/Payroll');
 const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly, managerOrAdmin, staffOnly } = require('../middlewares/roleMiddleware');
-const { normalizePhoneNumber, isValidIndianMobile } = require('../utils/phoneHelper');
+const { normalizePhoneNumber, isValidIndianMobile, validateMobileNumber } = require('../utils/phoneHelper');
+const { validateEmail } = require('../utils/emailHelper');
 const { logAudit } = require('../utils/auditLogger');
+
+// Helper to identify Demo unemployed / unemployed site
+const isUnemployedSite = async (siteId) => {
+  if (!siteId) return false;
+  try {
+    const siteDoc = await Site.findById(siteId).select('name');
+    if (!siteDoc) return false;
+    return /demo\s*unemployed/i.test(siteDoc.name) || /unemployed/i.test(siteDoc.name);
+  } catch {
+    return false;
+  }
+};
 
 // Helper to generate unique employee ID
 const generateEmployeeId = async () => {
@@ -57,18 +71,57 @@ router.get('/', protect, staffOnly, async (req, res) => {
       };
     }
 
-    // Optional status filter
-    if (req.query.status) query.status = req.query.status;
+    // Status filter
+    if (req.query.status && req.query.status !== 'all') {
+      query.status = req.query.status;
+    }
 
-    // Optional search filter
+    // Skill Category filter
+    if (req.query.skillCategory && req.query.skillCategory !== 'all') {
+      query.skillCategory = req.query.skillCategory;
+    }
+
+    // Designation filter
+    if (req.query.designation && req.query.designation !== 'all') {
+      query.designation = new RegExp(`^${req.query.designation.trim()}$`, 'i');
+    }
+
+    // Transfer Status filter
+    if (req.query.transferStatus && req.query.transferStatus !== 'all') {
+      query.transferStatus = req.query.transferStatus;
+    }
+
+    // Compensation/Wage filter (Admin only)
+    if (req.user.role === 'Admin') {
+      if (req.query.minSalary || req.query.maxSalary) {
+        query.baseSalary = {};
+        if (req.query.minSalary) query.baseSalary.$gte = Number(req.query.minSalary);
+        if (req.query.maxSalary) query.baseSalary.$lte = Number(req.query.maxSalary);
+      }
+    }
+
+    // Joining Date filter
+    if (req.query.startDate || req.query.endDate) {
+      query.joiningDate = {};
+      if (req.query.startDate) query.joiningDate.$gte = new Date(req.query.startDate);
+      if (req.query.endDate) {
+        const end = new Date(req.query.endDate);
+        end.setUTCHours(23, 59, 59, 999);
+        query.joiningDate.$lte = end;
+      }
+    }
+
+    // Search filter across name, ID, phone, email, and designation
     if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, 'i');
+      const searchRegex = new RegExp(req.query.search.trim(), 'i');
       const searchCondition = {
         $or: [
           { firstName: searchRegex },
           { lastName: searchRegex },
           { employeeId: searchRegex },
-          { phoneNumber: searchRegex }
+          { phoneNumber: searchRegex },
+          { email: searchRegex },
+          { designation: searchRegex }
         ]
       };
       if (siteCondition) {
@@ -83,8 +136,41 @@ router.get('/', protect, staffOnly, async (req, res) => {
       Object.assign(query, siteCondition);
     }
 
+    // Sorting support
+    let sortObj = { firstName: 1, lastName: 1 };
+    if (req.query.sortBy) {
+      const dir = req.query.sortOrder === 'desc' ? -1 : 1;
+      switch (req.query.sortBy) {
+        case 'name':
+          sortObj = { firstName: dir, lastName: dir };
+          break;
+        case 'employeeId':
+          sortObj = { employeeId: dir };
+          break;
+        case 'designation':
+          sortObj = { designation: dir };
+          break;
+        case 'skillCategory':
+          sortObj = { skillCategory: dir };
+          break;
+        case 'status':
+          sortObj = { status: dir };
+          break;
+        case 'joiningDate':
+          sortObj = { joiningDate: dir };
+          break;
+        case 'baseSalary':
+          if (req.user.role === 'Admin') {
+            sortObj = { baseSalary: dir };
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
     let workers = await Worker.find(query)
-      .sort({ firstName: 1, lastName: 1 })
+      .sort(sortObj)
       .populate('assignedSite', 'name location project')
       .populate('pendingSite', 'name location project')
       .lean();
@@ -147,16 +233,46 @@ router.post('/', protect, managerOrAdmin, async (req, res) => {
     const workerData = { ...req.body };
 
     // 1. Phone number normalization & strict validation
-    const normalizedPhone = normalizePhoneNumber(workerData.phoneNumber);
-    if (!isValidIndianMobile(normalizedPhone)) {
-      return res.status(400).json({ 
-        message: 'Invalid mobile number. Please provide a standard 10-digit Indian mobile number.' 
-      });
+    const phoneValidation = validateMobileNumber(workerData.phoneNumber, {
+      required: true,
+      fieldName: 'Worker mobile number'
+    });
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ message: phoneValidation.error });
     }
-    workerData.phoneNumber = normalizedPhone;
+    workerData.phoneNumber = phoneValidation.normalized;
+
+    // 1b. Emergency contact validation (optional)
+    if (workerData.emergencyContact && workerData.emergencyContact.toString().trim()) {
+      const emergencyValidation = validateMobileNumber(workerData.emergencyContact, {
+        required: false,
+        fieldName: 'Emergency contact number',
+        disallowSameAs: workerData.phoneNumber
+      });
+      if (!emergencyValidation.isValid) {
+        return res.status(400).json({ message: emergencyValidation.error });
+      }
+      workerData.emergencyContact = emergencyValidation.normalized;
+    } else {
+      delete workerData.emergencyContact;
+    }
+
+    // 1c. Email validation (optional)
+    if (workerData.email && workerData.email.toString().trim()) {
+      const emailValidation = validateEmail(workerData.email, {
+        required: false,
+        fieldName: 'Worker email'
+      });
+      if (!emailValidation.isValid) {
+        return res.status(400).json({ message: emailValidation.error });
+      }
+      workerData.email = emailValidation.normalized;
+    } else {
+      delete workerData.email;
+    }
 
     // 2. Strict De-Duplication check on Phone
-    const existing = await Worker.findOne({ phoneNumber: normalizedPhone });
+    const existing = await Worker.findOne({ phoneNumber: workerData.phoneNumber });
     if (existing) {
       return res.status(409).json({ 
         message: 'A worker profile with this mobile number is already registered. Please verify records or update the existing worker profile.' 
@@ -195,6 +311,11 @@ router.post('/', protect, managerOrAdmin, async (req, res) => {
     if (req.user.role === 'Manager') {
       delete workerData.baseSalary;
       delete workerData.salaryType;
+    }
+
+    // If assigned to Demo unemployed, worker status must be Inactive
+    if (workerData.assignedSite && await isUnemployedSite(workerData.assignedSite)) {
+      workerData.status = 'Inactive';
     }
 
     const worker = new Worker(workerData);
@@ -247,16 +368,53 @@ router.put('/:id', protect, managerOrAdmin, async (req, res) => {
 
     // Phone normalization if phone number is being changed
     if (updateData.phoneNumber) {
-      const cleanPhone = normalizePhoneNumber(updateData.phoneNumber);
-      if (!isValidIndianMobile(cleanPhone)) {
-        return res.status(400).json({ message: 'Invalid 10-digit Indian mobile number' });
+      const phoneValidation = validateMobileNumber(updateData.phoneNumber, {
+        required: true,
+        fieldName: 'Worker mobile number'
+      });
+      if (!phoneValidation.isValid) {
+        return res.status(400).json({ message: phoneValidation.error });
       }
       // Check duplicate
-      const duplicate = await Worker.findOne({ phoneNumber: cleanPhone, _id: { $ne: worker._id } });
+      const duplicate = await Worker.findOne({ phoneNumber: phoneValidation.normalized, _id: { $ne: worker._id } });
       if (duplicate) {
-        return res.status(409).json({ message: 'Another worker profile already exists with this phone number.' });
+        return res.status(409).json({ message: 'Another worker profile already exists with this mobile number.' });
       }
-      updateData.phoneNumber = cleanPhone;
+      updateData.phoneNumber = phoneValidation.normalized;
+    }
+
+    // Emergency contact normalization & validation
+    if (updateData.emergencyContact !== undefined) {
+      if (updateData.emergencyContact && updateData.emergencyContact.toString().trim()) {
+        const primaryPhone = updateData.phoneNumber || worker.phoneNumber;
+        const emergencyValidation = validateMobileNumber(updateData.emergencyContact, {
+          required: false,
+          fieldName: 'Emergency contact number',
+          disallowSameAs: primaryPhone
+        });
+        if (!emergencyValidation.isValid) {
+          return res.status(400).json({ message: emergencyValidation.error });
+        }
+        updateData.emergencyContact = emergencyValidation.normalized;
+      } else {
+        updateData.emergencyContact = '';
+      }
+    }
+
+    // Email validation
+    if (updateData.email !== undefined) {
+      if (updateData.email && updateData.email.toString().trim()) {
+        const emailValidation = validateEmail(updateData.email, {
+          required: false,
+          fieldName: 'Worker email'
+        });
+        if (!emailValidation.isValid) {
+          return res.status(400).json({ message: emailValidation.error });
+        }
+        updateData.email = emailValidation.normalized;
+      } else {
+        updateData.email = '';
+      }
     }
 
     // Check duplicate name if name is being changed
@@ -281,6 +439,15 @@ router.put('/:id', protect, managerOrAdmin, async (req, res) => {
     if (req.user.role === 'Manager') {
       delete updateData.baseSalary;
       delete updateData.salaryType;
+    }
+
+    // If assignedSite is updated to Demo unemployed, set status to Inactive
+    if (updateData.assignedSite && await isUnemployedSite(updateData.assignedSite)) {
+      updateData.status = 'Inactive';
+    } else if (!updateData.assignedSite && worker.assignedSite && await isUnemployedSite(worker.assignedSite)) {
+      if (updateData.status !== 'Active') {
+        updateData.status = 'Inactive';
+      }
     }
 
     Object.assign(worker, updateData);
@@ -363,16 +530,46 @@ router.post('/onboarding', async (req, res) => {
     workerData.status = 'Pending';
 
     // 1. Phone number normalization & strict validation
-    const normalizedPhone = normalizePhoneNumber(workerData.phoneNumber);
-    if (!isValidIndianMobile(normalizedPhone)) {
-      return res.status(400).json({ 
-        message: 'Invalid mobile number. Please provide a standard 10-digit Indian mobile number.' 
-      });
+    const phoneValidation = validateMobileNumber(workerData.phoneNumber, {
+      required: true,
+      fieldName: 'Mobile number'
+    });
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ message: phoneValidation.error });
     }
-    workerData.phoneNumber = normalizedPhone;
+    workerData.phoneNumber = phoneValidation.normalized;
+
+    // 1b. Emergency contact validation
+    if (workerData.emergencyContact && workerData.emergencyContact.toString().trim()) {
+      const emergencyValidation = validateMobileNumber(workerData.emergencyContact, {
+        required: false,
+        fieldName: 'Emergency contact number',
+        disallowSameAs: workerData.phoneNumber
+      });
+      if (!emergencyValidation.isValid) {
+        return res.status(400).json({ message: emergencyValidation.error });
+      }
+      workerData.emergencyContact = emergencyValidation.normalized;
+    } else {
+      delete workerData.emergencyContact;
+    }
+
+    // 1c. Email validation (optional)
+    if (workerData.email && workerData.email.toString().trim()) {
+      const emailValidation = validateEmail(workerData.email, {
+        required: false,
+        fieldName: 'Email address'
+      });
+      if (!emailValidation.isValid) {
+        return res.status(400).json({ message: emailValidation.error });
+      }
+      workerData.email = emailValidation.normalized;
+    } else {
+      delete workerData.email;
+    }
 
     // 2. Strict De-Duplication Engine Requirement
-    const existing = await Worker.findOne({ phoneNumber: normalizedPhone });
+    const existing = await Worker.findOne({ phoneNumber: workerData.phoneNumber });
     if (existing) {
       return res.status(409).json({ 
         message: 'A profile with this mobile number is already registered. Please contact your manager or verify your records via the Attendance Portal.' 
@@ -463,7 +660,12 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
       employeeId = await generateEmployeeId();
     }
 
-    worker.status = 'Active';
+    // If assigned to Demo unemployed, set Inactive instead of Active
+    if (await isUnemployedSite(assignedSite)) {
+      worker.status = 'Inactive';
+    } else {
+      worker.status = 'Active';
+    }
     worker.employeeId = employeeId;
     // Admins can set base salary, managers set default or pass through
     if (req.user.role === 'Admin') {

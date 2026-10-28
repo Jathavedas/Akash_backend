@@ -28,6 +28,9 @@ router.get('/', protect, async (req, res) => {
       }
       query._id = req.user.assignedSite;
     }
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
     const sites = await Site.find(query);
     res.json(sites);
   } catch (error) {

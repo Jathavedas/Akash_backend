@@ -6,6 +6,7 @@ const Attendance = require('../models/Attendance');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly } = require('../middlewares/roleMiddleware');
 const { logAudit } = require('../utils/auditLogger');
+const { validateEmail } = require('../utils/emailHelper');
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -416,8 +417,12 @@ router.post('/:id/send-email', protect, adminOnly, async (req, res) => {
 
         // Allow updating worker email if provided in request body
     const { email } = req.body;
-    if (email && email.trim()) {
-      const cleanEmail = email.trim();
+    if (email && email.toString().trim()) {
+      const emailValidation = validateEmail(email, { required: false, fieldName: 'Worker email' });
+      if (!emailValidation.isValid) {
+        return res.status(400).json({ message: emailValidation.error });
+      }
+      const cleanEmail = emailValidation.normalized;
       await Worker.findByIdAndUpdate(payroll.workerId._id, { email: cleanEmail });
       payroll.workerId.email = cleanEmail;
     }

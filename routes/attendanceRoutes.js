@@ -3,9 +3,11 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Attendance = require('../models/Attendance');
 const Worker = require('../models/Worker');
+const Site = require('../models/Site');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly, staffOnly, managerOrAdmin } = require('../middlewares/roleMiddleware');
-const { normalizePhoneNumber } = require('../utils/phoneHelper');
+const { normalizePhoneNumber, isValidIndianMobile, validateMobileNumber } = require('../utils/phoneHelper');
+const { validateEmail } = require('../utils/emailHelper');
 const { logAudit } = require('../utils/auditLogger');
 
 // @desc    Self-Service Profile Spelling Correction
@@ -19,7 +21,11 @@ router.put('/self-edit-name', async (req, res) => {
       return res.status(400).json({ message: 'Phone number, First Name, and Last Name are required' });
     }
 
-    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const phoneValidation = validateMobileNumber(phoneNumber, { required: true, fieldName: 'Mobile number' });
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ message: phoneValidation.error });
+    }
+    const cleanPhone = phoneValidation.normalized;
     const worker = await Worker.findOne({ phoneNumber: cleanPhone });
 
     if (!worker) {
@@ -90,20 +96,20 @@ router.put('/self-edit-email', async (req, res) => {
       return res.status(400).json({ message: 'Phone number is required' });
     }
 
-    if (email === undefined || email === null) {
-      return res.status(400).json({ message: 'Email address is required' });
+    let cleanEmail = '';
+    if (email !== undefined && email !== null && email.toString().trim() !== '') {
+      const emailValidation = validateEmail(email, { required: false, fieldName: 'Email address' });
+      if (!emailValidation.isValid) {
+        return res.status(400).json({ message: emailValidation.error });
+      }
+      cleanEmail = emailValidation.normalized;
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (cleanEmail && !emailRegex.test(cleanEmail)) {
-      return res.status(400).json({ 
-        message: 'Invalid email address format. Please enter a valid email (e.g. worker@example.com).' 
-      });
+    const phoneValidation = validateMobileNumber(phoneNumber, { required: true, fieldName: 'Mobile number' });
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ message: phoneValidation.error });
     }
-
-    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const cleanPhone = phoneValidation.normalized;
     const worker = await Worker.findOne({ phoneNumber: cleanPhone });
 
     if (!worker) {
@@ -468,30 +474,45 @@ router.get('/today-summary', protect, managerOrAdmin, async (req, res) => {
     const queryDate = new Date(targetDateStr);
     queryDate.setUTCHours(0, 0, 0, 0);
 
-    const workers = await Worker.find({ status: 'Active' })
-      .populate('assignedSite', 'name')
-      .populate('pendingSite', 'name');
-    const attendances = await Attendance.find({ date: queryDate });
+    // 1. Fetch only ACTIVE project sites so the overview strictly shows active projects
+    const activeSites = await Site.find({ status: 'Active' }).sort({ name: 1 }).lean();
 
     const siteMap = {};
+    activeSites.forEach(s => {
+      const siteId = s._id.toString();
+      siteMap[siteId] = {
+        siteId,
+        siteName: s.name,
+        project: s.project,
+        location: s.location,
+        status: s.status,
+        total: 0,
+        present: 0,
+        halfDay: 0,
+        absent: 0,
+        pending: 0
+      };
+    });
+
+    const activeSiteIds = Object.keys(siteMap);
+
+    const workers = await Worker.find({ status: 'Active' })
+      .populate('assignedSite', 'name status project')
+      .populate('pendingSite', 'name status project');
+    const attendances = await Attendance.find({ 
+      date: queryDate,
+      siteId: { $in: activeSiteIds }
+    });
 
     workers.forEach(w => {
       // If worker has a pending transfer, they are active at pendingSite
       const site = (w.transferStatus === 'Pending' && w.pendingSite) ? w.pendingSite : w.assignedSite;
       if (!site) return;
       const siteId = site._id.toString();
-      if (!siteMap[siteId]) {
-        siteMap[siteId] = {
-          siteId,
-          siteName: site.name,
-          total: 0,
-          present: 0,
-          halfDay: 0,
-          absent: 0,
-          pending: 0
-        };
+      // Only record workers belonging to active project sites
+      if (siteMap[siteId]) {
+        siteMap[siteId].total += 1;
       }
-      siteMap[siteId].total += 1;
     });
 
     attendances.forEach(a => {

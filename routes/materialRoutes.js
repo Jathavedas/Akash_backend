@@ -565,6 +565,10 @@ router.get('/financial-summary', protect, staffOnly, async (req, res) => {
       siteFilter._id = site;
     }
 
+    if (req.query.status) {
+      siteFilter.status = req.query.status;
+    }
+
     const sites = await Site.find(siteFilter).sort({ name: 1 });
     const siteIds = sites.map(s => s._id);
 

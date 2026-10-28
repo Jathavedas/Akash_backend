@@ -8,6 +8,13 @@ const { staffOnly, managerOrAdmin } = require('../middlewares/roleMiddleware');
 const { normalizePhoneNumber } = require('../utils/phoneHelper');
 const { logAudit } = require('../utils/auditLogger');
 
+// Helper to identify Demo unemployed / unemployed site
+const isUnemployedSite = (site) => {
+  if (!site) return false;
+  const name = typeof site === 'string' ? site : (site.name || '');
+  return /demo\s*unemployed/i.test(name) || /unemployed/i.test(name);
+};
+
 // @desc    Initiate instant cross-site worker transfer
 // @route   POST /api/transfers/request
 // @access  Private (Supervisor, Manager, Admin)
@@ -89,9 +96,12 @@ router.post('/request', protect, staffOnly, async (req, res) => {
       notes: notes || 'Field cross-site deployment'
     });
 
-    // Mark worker with pending transfer immediately so supervisor can take attendance right away
+    // Mark worker with pending transfer immediately
     worker.transferStatus = 'Pending';
     worker.pendingSite = targetSiteId;
+    if (isUnemployedSite(targetSite)) {
+      worker.status = 'Inactive';
+    }
     await worker.save();
 
     await logAudit({
@@ -183,6 +193,9 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
     worker.assignedSite = transfer.toSite._id;
     worker.transferStatus = 'None';
     worker.pendingSite = null;
+    if (isUnemployedSite(transfer.toSite)) {
+      worker.status = 'Inactive';
+    }
     await worker.save();
 
     await logAudit({

@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { validateEmail, normalizeEmail } = require('../utils/emailHelper');
 
 const router = express.Router();
 
@@ -15,9 +16,10 @@ const generateToken = (id) => {
 // @access  Public
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  const cleanEmail = normalizeEmail(email);
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: cleanEmail });
 
     if (user && (await user.matchPassword(password))) {
       res.json({
@@ -43,7 +45,13 @@ router.post('/register', async (req, res) => {
   const { name, email, password, role, assignedSite } = req.body;
 
   try {
-    const userExists = await User.findOne({ email });
+    const emailValidation = validateEmail(email, { required: true, fieldName: 'Email' });
+    if (!emailValidation.isValid) {
+      return res.status(400).json({ message: emailValidation.error });
+    }
+    const cleanEmail = emailValidation.normalized;
+
+    const userExists = await User.findOne({ email: cleanEmail });
 
     if (userExists) {
       return res.status(400).json({ message: 'User already exists' });
@@ -51,7 +59,7 @@ router.post('/register', async (req, res) => {
 
     const user = await User.create({
       name,
-      email,
+      email: cleanEmail,
       password,
       role: role || 'Supervisor',
       assignedSite: assignedSite || null
