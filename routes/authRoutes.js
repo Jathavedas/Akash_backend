@@ -19,7 +19,7 @@ router.post('/login', async (req, res) => {
   const cleanEmail = normalizeEmail(email);
 
   try {
-    const user = await User.findOne({ email: cleanEmail });
+    const user = await User.findOne({ email: cleanEmail }).populate('assignedSite', 'name location');
 
     if (user && (await user.matchPassword(password))) {
       res.json({

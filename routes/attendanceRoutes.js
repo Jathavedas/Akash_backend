@@ -12,34 +12,56 @@ const { logAudit } = require('../utils/auditLogger');
 
 // @desc    Self-Service Profile Spelling Correction
 // @route   PUT /api/attendance/self-edit-name
-// @access  Public (Verified by registered phone number)
+// @access  Public (Verified by registered phone number or Employee ID)
 router.put('/self-edit-name', async (req, res) => {
   try {
-    const { phoneNumber, firstName, lastName } = req.body;
+    const { phoneNumber, employeeId, workerId, firstName, lastName } = req.body;
 
-    if (!phoneNumber || !firstName || !lastName) {
-      return res.status(400).json({ message: 'Phone number, First Name, and Last Name are required' });
+    if ((!phoneNumber && !employeeId && !workerId) || !firstName || !lastName) {
+      return res.status(400).json({ message: 'Worker identifier (phone or Employee ID), First Name, and Last Name are required' });
     }
 
-    const phoneValidation = validateMobileNumber(phoneNumber, { required: true, fieldName: 'Mobile number' });
-    if (!phoneValidation.isValid) {
-      return res.status(400).json({ message: phoneValidation.error });
+    let worker = null;
+    if (phoneNumber) {
+      const cleanPhone = normalizePhoneNumber(phoneNumber);
+      if (cleanPhone) {
+        worker = await Worker.findOne({ phoneNumber: cleanPhone });
+      }
     }
-    const cleanPhone = phoneValidation.normalized;
-    const worker = await Worker.findOne({ phoneNumber: cleanPhone });
+    if (!worker && employeeId) {
+      const escaped = employeeId.toString().trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      worker = await Worker.findOne({ employeeId: new RegExp(`^${escaped}$`, 'i') });
+    }
+    if (!worker && workerId && mongoose.isValidObjectId(workerId)) {
+      worker = await Worker.findById(workerId);
+    }
 
     if (!worker) {
-      return res.status(404).json({ message: 'Worker profile not found for this mobile number' });
+      return res.status(404).json({ message: 'Worker profile not found for this identifier' });
     }
 
-    // Name validation: Alphabetical characters, spaces, and hyphens only (min 2, max 40 chars)
-    const nameRegex = /^[A-Za-z\s\-]{2,40}$/;
+    // Name validation: Alphabetical characters, spaces, periods, and hyphens (min 2 for first name)
+    const nameRegex = /^[A-Za-z\s\-.]{1,40}$/;
     const trimmedFirst = firstName.trim();
     const trimmedLast = lastName.trim();
 
-    if (!nameRegex.test(trimmedFirst) || !nameRegex.test(trimmedLast)) {
+    if (trimmedFirst.length < 2 || !nameRegex.test(trimmedFirst) || !nameRegex.test(trimmedLast)) {
       return res.status(400).json({ 
-        message: 'Invalid name format. Names must contain only letters, spaces, or hyphens (2-40 characters).' 
+        message: 'Invalid name format. First name must be at least 2 characters. Names must contain only letters, spaces, hyphens, or periods.' 
+      });
+    }
+
+    // Check duplicate name across other profiles
+    const escapedFirst = trimmedFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedLast = trimmedLast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const duplicate = await Worker.findOne({
+      _id: { $ne: worker._id },
+      firstName: new RegExp(`^${escapedFirst}$`, 'i'),
+      lastName: new RegExp(`^${escapedLast}$`, 'i')
+    });
+    if (duplicate) {
+      return res.status(400).json({
+        message: `Another worker named "${trimmedFirst} ${trimmedLast}" already exists in the system. Duplicate names are not permitted. Please add an initial or middle name to differentiate.`
       });
     }
 
@@ -61,7 +83,7 @@ router.put('/self-edit-name', async (req, res) => {
       targetEntity: {
         entityType: 'Worker',
         entityId: worker._id.toString(),
-        name: `${trimmedFirst} ${trimmedLast} (${worker.employeeId})`
+        name: `${trimmedFirst} ${trimmedLast} (${worker.employeeId || 'No ID'})`
       },
       previousState,
       newState: {
@@ -77,7 +99,10 @@ router.put('/self-edit-name', async (req, res) => {
         _id: worker._id,
         firstName: worker.firstName,
         lastName: worker.lastName,
-        employeeId: worker.employeeId
+        name: `${worker.firstName} ${worker.lastName}`,
+        employeeId: worker.employeeId,
+        phoneNumber: worker.phoneNumber,
+        email: worker.email || ''
       }
     });
   } catch (error) {
@@ -87,13 +112,13 @@ router.put('/self-edit-name', async (req, res) => {
 
 // @desc    Self-Service Worker Email Update
 // @route   PUT /api/attendance/self-edit-email
-// @access  Public (Verified by registered phone number)
+// @access  Public (Verified by registered phone number or Employee ID)
 router.put('/self-edit-email', async (req, res) => {
   try {
-    const { phoneNumber, email } = req.body;
+    const { phoneNumber, employeeId, workerId, email } = req.body;
 
-    if (!phoneNumber) {
-      return res.status(400).json({ message: 'Phone number is required' });
+    if (!phoneNumber && !employeeId && !workerId) {
+      return res.status(400).json({ message: 'Phone number or Employee ID is required' });
     }
 
     let cleanEmail = '';
@@ -105,15 +130,23 @@ router.put('/self-edit-email', async (req, res) => {
       cleanEmail = emailValidation.normalized;
     }
 
-    const phoneValidation = validateMobileNumber(phoneNumber, { required: true, fieldName: 'Mobile number' });
-    if (!phoneValidation.isValid) {
-      return res.status(400).json({ message: phoneValidation.error });
+    let worker = null;
+    if (phoneNumber) {
+      const cleanPhone = normalizePhoneNumber(phoneNumber);
+      if (cleanPhone) {
+        worker = await Worker.findOne({ phoneNumber: cleanPhone });
+      }
     }
-    const cleanPhone = phoneValidation.normalized;
-    const worker = await Worker.findOne({ phoneNumber: cleanPhone });
+    if (!worker && employeeId) {
+      const escaped = employeeId.toString().trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      worker = await Worker.findOne({ employeeId: new RegExp(`^${escaped}$`, 'i') });
+    }
+    if (!worker && workerId && mongoose.isValidObjectId(workerId)) {
+      worker = await Worker.findById(workerId);
+    }
 
     if (!worker) {
-      return res.status(404).json({ message: 'Worker profile not found for this mobile number' });
+      return res.status(404).json({ message: 'Worker profile not found for this identifier' });
     }
 
     const previousEmail = worker.email || '';
@@ -144,6 +177,7 @@ router.put('/self-edit-email', async (req, res) => {
         lastName: worker.lastName,
         name: `${worker.firstName} ${worker.lastName}`,
         employeeId: worker.employeeId,
+        phoneNumber: worker.phoneNumber,
         email: worker.email || ''
       }
     });
@@ -152,21 +186,43 @@ router.put('/self-edit-email', async (req, res) => {
   }
 });
 
-// @desc    Get worker monthly attendance calendar (Public or Self lookup)
-// @route   GET /api/attendance/calendar/:identifier
-// @access  Public
-router.get('/calendar/:identifier', async (req, res) => {
+// Reusable handler for worker monthly attendance lookup
+const handleCalendarLookup = async (req, res) => {
   try {
-    const { identifier } = req.params;
-    const cleanPhone = normalizePhoneNumber(identifier);
-    const searchRegex = new RegExp(`^${identifier.trim()}$`, 'i');
+    const rawParam = req.params.identifier || req.query.phone || req.query.employeeId || req.query.identifier;
+    if (!rawParam || !rawParam.toString().trim()) {
+      return res.status(400).json({ message: 'Registered mobile number or Employee ID is required' });
+    }
 
-    const worker = await Worker.findOne({
-      $or: [
-        { phoneNumber: cleanPhone },
-        { employeeId: searchRegex }
-      ]
-    }).populate('assignedSite', 'name location');
+    const identifier = rawParam.toString().trim();
+    const cleanPhone = normalizePhoneNumber(identifier);
+    const escapedId = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const searchConditions = [];
+
+    // Valid 10-digit phone
+    if (cleanPhone && cleanPhone.length === 10) {
+      searchConditions.push({ phoneNumber: cleanPhone });
+    }
+
+    // Exact Employee ID match (case-insensitive)
+    searchConditions.push({ employeeId: new RegExp(`^${escapedId}$`, 'i') });
+
+    // Numeric padding for Employee IDs like EMP0012 when user enters 12 or 0012
+    const numericPart = identifier.replace(/\D/g, '');
+    if (numericPart && numericPart.length <= 6) {
+      searchConditions.push({ employeeId: new RegExp(`^EMP[-_]?0*${numericPart}$`, 'i') });
+    }
+
+    // Match alphanumeric stripped of special chars (e.g. EMP-0012 vs EMP0012)
+    const cleanAlphanumeric = identifier.replace(/[^a-zA-Z0-9]/g, '');
+    if (cleanAlphanumeric && cleanAlphanumeric !== identifier) {
+      searchConditions.push({ employeeId: new RegExp(`^${cleanAlphanumeric}$`, 'i') });
+    }
+
+    const worker = await Worker.findOne({ $or: searchConditions })
+      .populate('assignedSite', 'name location status project')
+      .populate('pendingSite', 'name location status project');
 
     if (!worker) {
       return res.status(404).json({ message: 'No worker found with this Phone Number or Employee ID' });
@@ -182,18 +238,24 @@ router.get('/calendar/:identifier', async (req, res) => {
     const attendances = await Attendance.find({
       workerId: worker._id,
       date: { $gte: startDate, $lte: endDate }
-    }).sort({ date: 1 });
+    }).populate('siteId', 'name location').sort({ date: 1 });
 
     const calendar = attendances.map(a => ({
       date: a.date.toISOString().substring(0, 10),
       status: a.status,
-      overtimeHours: Math.round(a.overtimeHours || 0)
+      overtimeHours: Math.round(a.overtimeHours || 0),
+      siteName: a.siteId ? a.siteId.name : null
     }));
 
     const totalOvertime = Math.round(attendances.reduce((sum, a) => sum + (a.overtimeHours || 0), 0));
     const presentDays = attendances.filter(a => a.status === 'Present').length;
     const halfDays = attendances.filter(a => a.status === 'Half Day').length;
     const absentDays = attendances.filter(a => a.status === 'Absent').length;
+
+    let siteDisplay = worker.assignedSite ? worker.assignedSite.name : 'Unassigned';
+    if (worker.transferStatus === 'Pending' && worker.pendingSite) {
+      siteDisplay = `${worker.assignedSite ? worker.assignedSite.name : 'Unassigned'} (Transfer Pending to ${worker.pendingSite.name})`;
+    }
 
     res.json({
       worker: {
@@ -205,7 +267,11 @@ router.get('/calendar/:identifier', async (req, res) => {
         phoneNumber: worker.phoneNumber,
         email: worker.email || '',
         designation: worker.designation,
-        site: worker.assignedSite ? worker.assignedSite.name : null
+        site: siteDisplay,
+        assignedSite: worker.assignedSite ? { _id: worker.assignedSite._id, name: worker.assignedSite.name } : null,
+        pendingSite: worker.pendingSite ? { _id: worker.pendingSite._id, name: worker.pendingSite.name } : null,
+        transferStatus: worker.transferStatus || 'None',
+        status: worker.status
       },
       year,
       month,
@@ -215,7 +281,13 @@ router.get('/calendar/:identifier', async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
-});
+};
+
+// @desc    Worker monthly attendance lookup (Supports query params or path params)
+// @route   GET /api/attendance/lookup or GET /api/attendance/calendar/:identifier
+// @access  Public
+router.get('/lookup', handleCalendarLookup);
+router.get('/calendar/:identifier', handleCalendarLookup);
 
 // @desc    Mark bulk attendance for a specific date and site (Supports historical date for Admin/Manager)
 // @route   POST /api/attendance/bulk

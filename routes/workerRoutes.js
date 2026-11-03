@@ -4,6 +4,7 @@ const Worker = require('../models/Worker');
 const Site = require('../models/Site');
 const Payroll = require('../models/Payroll');
 const Attendance = require('../models/Attendance');
+const TransferRequest = require('../models/TransferRequest');
 const { protect } = require('../middlewares/authMiddleware');
 const { adminOnly, managerOrAdmin, staffOnly } = require('../middlewares/roleMiddleware');
 const { normalizePhoneNumber, isValidIndianMobile, validateMobileNumber } = require('../utils/phoneHelper');
@@ -450,6 +451,16 @@ router.put('/:id', protect, managerOrAdmin, async (req, res) => {
       }
     }
 
+    // If assignedSite is modified directly, resolve any pending cross-site transfers
+    if (updateData.assignedSite && updateData.assignedSite.toString() !== (worker.assignedSite?.toString() || '')) {
+      await TransferRequest.updateMany(
+        { workerId: worker._id, status: 'Pending' },
+        { status: 'Superseded' }
+      );
+      updateData.transferStatus = 'None';
+      updateData.pendingSite = null;
+    }
+
     Object.assign(worker, updateData);
     const updatedWorker = await worker.save();
 
@@ -687,8 +698,8 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
         name: `${worker.firstName} ${worker.lastName} (${worker.employeeId})`
       },
       previousState: { status: 'Pending' },
-      newState: { status: 'Active', assignedSite, skillCategory, employeeId },
-      details: `Worker ${worker.firstName} ${worker.lastName} approved and activated by ${req.user.name} (${req.user.role})`
+      newState: { status: updatedWorker.status, assignedSite, skillCategory, employeeId },
+      details: `Worker ${worker.firstName} ${worker.lastName} approved (${updatedWorker.status}) by ${req.user.name} (${req.user.role})`
     });
 
     res.json(updatedWorker);

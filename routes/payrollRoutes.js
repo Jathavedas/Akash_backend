@@ -22,16 +22,11 @@ router.post('/generate', protect, adminOnly, async (req, res) => {
 
   try {
     let query = { status: 'Active' };
-    if (Array.isArray(workerIds)) {
+    if (Array.isArray(workerIds) && workerIds.length > 0) {
       query._id = { $in: workerIds };
     }
     
-    if (req.user.role === 'Supervisor') {
-      if (!req.user.assignedSite) {
-        return res.status(403).json({ message: 'No site assigned to this supervisor' });
-      }
-      query.assignedSite = req.user.assignedSite;
-    } else if (req.user.role === 'Admin' && siteId) {
+    if (siteId) {
       query.assignedSite = siteId;
     }
 
@@ -207,20 +202,29 @@ router.put('/:id/advance', protect, adminOnly, async (req, res) => {
       .populate('workerId', 'firstName lastName employeeId designation assignedSite email')
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
+    const workerFullName = `${payroll.workerId?.firstName || 'Worker'} ${payroll.workerId?.lastName || ''}`.trim();
+    const changes = [];
+    if (previousState.advanceDeduction !== updated.advanceDeduction) changes.push(`advance deduction from ₹${previousState.advanceDeduction} to ₹${updated.advanceDeduction}`);
+    if (previousState.otherDeduction !== updated.otherDeduction) changes.push(`other deduction from ₹${previousState.otherDeduction} to ₹${updated.otherDeduction}`);
+    if (previousState.bonus !== updated.bonus) changes.push(`bonus from ₹${previousState.bonus} to ₹${updated.bonus}`);
+    changes.push(`net salary recalculated from ₹${previousState.netSalary} to ₹${updated.netSalary}`);
+
     await logAudit({
       performedBy: req.user,
       actionType: 'PAYROLL_UPDATE',
       targetEntity: {
         entityType: 'Payroll',
         entityId: payroll._id.toString(),
-        name: `Payroll for ${payroll.workerId?.firstName || 'Worker'} (${payroll.month}/${payroll.year})`
+        name: `Payroll for ${workerFullName} (${payroll.month}/${payroll.year})`
       },
       previousState,
       newState: {
         advanceDeduction: updated.advanceDeduction,
+        otherDeduction: updated.otherDeduction,
+        bonus: updated.bonus,
         netSalary: updated.netSalary
       },
-      details: `Advance deduction of ₹${updated.advanceDeduction} applied for ${payroll.workerId?.firstName} ${payroll.workerId?.lastName}. Net salary recalculated from ₹${previousState.netSalary} to ₹${updated.netSalary} by ${req.user.name}`
+      details: `Payroll adjustments for ${workerFullName}: ${changes.join(', ')} by ${req.user.name}`
     });
 
     res.json({ message: 'Advance deduction updated and net salary adjusted successfully', payroll: populated });
@@ -266,34 +270,36 @@ router.get('/pdf/:id', protect, adminOnly, async (req, res) => {
 
 // @desc    Download ALL payslips for a month as a single PDF
 // @route   GET /api/payroll/pdf-all?month=X&year=Y
-// @access  Private/Admin or Supervisor
+// @access  Private/Admin
 router.get('/pdf-all', protect, adminOnly, async (req, res) => {
-  const { month, year, payrollIds } = req.query;
+  const { month, year, payrollIds, siteId } = req.query;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {
-    const query = { month: parseInt(month), year: parseInt(year) };
-    if (payrollIds && Array.isArray(payrollIds) && payrollIds.length > 0) {
-      query._id = { $in: payrollIds };
+    const query = { month: parseInt(month, 10), year: parseInt(year, 10) };
+    let ids = payrollIds;
+    if (typeof ids === 'string') {
+      ids = ids.split(',').map(s => s.trim()).filter(Boolean);
     }
+    if (Array.isArray(ids) && ids.length > 0) {
+      query._id = { $in: ids };
+    }
+
     const payrolls = await Payroll.find(query)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
     let validPayrolls = payrolls.filter(pr => pr.workerId !== null);
 
-    if (req.user.role === 'Supervisor') {
-      if (!req.user.assignedSite) {
-        return res.status(403).json({ message: 'No site assigned to this supervisor' });
-      }
+    if (siteId) {
       validPayrolls = validPayrolls.filter(pr => {
-        const siteId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
-        return siteId?.toString() === req.user.assignedSite.toString();
+        const sId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return sId?.toString() === siteId.toString();
       });
     }
 
-    if (validPayrolls.length === 0) return res.status(404).json({ message: 'No valid payroll records found for this month' });
+    if (validPayrolls.length === 0) return res.status(404).json({ message: 'No valid payroll records found for this selection' });
 
-    const monthName = MONTH_NAMES[parseInt(month) - 1];
+    const monthName = MONTH_NAMES[parseInt(month, 10) - 1];
     const doc = new PDFDocument({ size: 'A4', margin: 40 });
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -319,18 +325,30 @@ const { sendPayslipEmail } = require('../utils/emailService');
 // @route   POST /api/payroll/send-emails
 // @access  Private/Admin
 router.post('/send-emails', protect, adminOnly, async (req, res) => {
-  const { month, year, payrollIds } = req.body;
+  const { month, year, payrollIds, siteId } = req.body;
   if (!month || !year) return res.status(400).json({ message: 'Month and year required' });
 
   try {
-    const query = { month: parseInt(month), year: parseInt(year) };
-    if (payrollIds && Array.isArray(payrollIds) && payrollIds.length > 0) {
-      query._id = { $in: payrollIds };
+    const query = { month: parseInt(month, 10), year: parseInt(year, 10) };
+    let ids = payrollIds;
+    if (typeof ids === 'string') {
+      ids = ids.split(',').map(s => s.trim()).filter(Boolean);
     }
+    if (Array.isArray(ids) && ids.length > 0) {
+      query._id = { $in: ids };
+    }
+
     const payrolls = await Payroll.find(query)
       .populate({ path: 'workerId', populate: { path: 'assignedSite', select: 'name' } });
 
-    const eligibleWorkers = payrolls.filter(pr => pr.workerId && pr.workerId.email);
+    let eligibleWorkers = payrolls.filter(pr => pr.workerId && pr.workerId.email);
+
+    if (siteId) {
+      eligibleWorkers = eligibleWorkers.filter(pr => {
+        const sId = pr.workerId.assignedSite?._id || pr.workerId.assignedSite;
+        return sId?.toString() === siteId.toString();
+      });
+    }
     
     if (eligibleWorkers.length === 0) {
       return res.status(400).json({ message: 'No eligible workers with email addresses found.' });

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const TransferRequest = require('../models/TransferRequest');
 const Worker = require('../models/Worker');
 const Site = require('../models/Site');
@@ -26,28 +27,49 @@ router.post('/request', protect, staffOnly, async (req, res) => {
       return res.status(400).json({ message: 'Worker Phone/ID and Target Site are required' });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(targetSiteId)) {
+      return res.status(400).json({ message: 'Invalid Target Site ID' });
+    }
+
     // Supervisors can only request transfer to their assigned site
     if (req.user.role === 'Supervisor') {
-      if (!req.user.assignedSite || req.user.assignedSite.toString() !== targetSiteId) {
+      const userSiteId = (req.user.assignedSite?._id || req.user.assignedSite)?.toString();
+      if (!userSiteId || userSiteId !== targetSiteId.toString()) {
         return res.status(403).json({ message: 'Supervisors can only request transfers to their assigned site' });
       }
     }
 
-    const cleanPhone = normalizePhoneNumber(identifier);
-    const searchRegex = new RegExp(`^${identifier.trim()}$`, 'i');
+    const trimmedId = identifier.toString().trim();
+    const cleanPhone = normalizePhoneNumber(trimmedId);
+    // Escape regex special characters so inputs with '+', '(', etc. don't crash RegExp constructor
+    const escapedId = trimmedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = new RegExp(`^${escapedId}$`, 'i');
+
+    const orConditions = [{ employeeId: searchRegex }];
+
+    // If identifier has 10 normalized digits, search by phone
+    if (cleanPhone && cleanPhone.length === 10) {
+      orConditions.push({ phoneNumber: cleanPhone });
+    } else if (cleanPhone && cleanPhone.length > 10) {
+      orConditions.push({ phoneNumber: cleanPhone.slice(-10) });
+    }
+
+    // Support numeric employee ID lookup (e.g. 12 -> EMP0012)
+    if (/^\d{1,4}$/.test(trimmedId)) {
+      const paddedId = `EMP${trimmedId.padStart(4, '0')}`;
+      orConditions.push({ employeeId: new RegExp(`^${paddedId}$`, 'i') });
+    }
 
     const worker = await Worker.findOne({
-      $or: [
-        { phoneNumber: cleanPhone },
-        { employeeId: searchRegex }
-      ]
+      $or: orConditions
     }).populate('assignedSite', 'name location');
 
     if (!worker) {
       return res.status(404).json({ message: 'No worker found with this Phone Number or Employee ID' });
     }
 
-    if (worker.assignedSite && worker.assignedSite._id.toString() === targetSiteId) {
+    const currentSiteId = (worker.assignedSite?._id || worker.assignedSite)?.toString();
+    if (currentSiteId && currentSiteId === targetSiteId.toString()) {
       return res.status(400).json({ message: 'Worker is already permanently assigned to this project site' });
     }
 
@@ -66,6 +88,11 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     if (existingPending) {
       worker.transferStatus = 'Pending';
       worker.pendingSite = targetSiteId;
+      if (isUnemployedSite(targetSite)) {
+        worker.status = 'Inactive';
+      } else if (worker.status === 'Inactive') {
+        worker.status = 'Active';
+      }
       await worker.save();
       return res.status(200).json({ 
         message: 'Worker is already active on your site roster with "Transfer Pending" status. You can mark their attendance immediately without waiting for manager approval!',
@@ -81,15 +108,15 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     );
 
     const previousState = {
-      assignedSite: worker.assignedSite?._id,
-      siteName: worker.assignedSite?.name,
+      assignedSite: currentSiteId,
+      siteName: worker.assignedSite?.name || 'Unassigned',
       transferStatus: worker.transferStatus,
       pendingSite: worker.pendingSite
     };
 
     const transferRequest = await TransferRequest.create({
       workerId: worker._id,
-      fromSite: worker.assignedSite?._id,
+      fromSite: currentSiteId || null,
       toSite: targetSiteId,
       requestedBy: req.user._id,
       status: 'Pending',
@@ -101,6 +128,8 @@ router.post('/request', protect, staffOnly, async (req, res) => {
     worker.pendingSite = targetSiteId;
     if (isUnemployedSite(targetSite)) {
       worker.status = 'Inactive';
+    } else if (worker.status === 'Inactive') {
+      worker.status = 'Active';
     }
     await worker.save();
 
@@ -110,11 +139,11 @@ router.post('/request', protect, staffOnly, async (req, res) => {
       targetEntity: {
         entityType: 'Worker',
         entityId: worker._id.toString(),
-        name: `${worker.firstName} ${worker.lastName} (${worker.employeeId})`
+        name: `${worker.firstName} ${worker.lastName} (${worker.employeeId || 'ID Pending'})`
       },
       previousState,
       newState: {
-        assignedSite: worker.assignedSite?._id,
+        assignedSite: currentSiteId,
         transferStatus: 'Pending',
         pendingSite: targetSiteId,
         targetSiteName: targetSite.name
@@ -174,10 +203,21 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
       return res.status(400).json({ message: `Transfer already ${transfer.status.toLowerCase()}` });
     }
 
-    const worker = await Worker.findById(transfer.workerId._id);
+    const workerId = transfer.workerId?._id || transfer.workerId;
+    if (!workerId) {
+      return res.status(404).json({ message: 'Associated worker not found' });
+    }
+
+    const worker = await Worker.findById(workerId);
     if (!worker) {
       return res.status(404).json({ message: 'Associated worker not found' });
     }
+
+    const targetSiteId = transfer.toSite?._id || transfer.toSite;
+    if (!targetSiteId) {
+      return res.status(404).json({ message: 'Target project site not found' });
+    }
+    const targetSiteName = transfer.toSite?.name || 'Target Site';
 
     const previousState = {
       assignedSite: worker.assignedSite,
@@ -190,11 +230,19 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
     transfer.reviewedAt = new Date();
     await transfer.save();
 
-    worker.assignedSite = transfer.toSite._id;
+    // Mark any other older pending transfers for this worker as Superseded
+    await TransferRequest.updateMany(
+      { workerId: worker._id, _id: { $ne: transfer._id }, status: 'Pending' },
+      { status: 'Superseded' }
+    );
+
+    worker.assignedSite = targetSiteId;
     worker.transferStatus = 'None';
     worker.pendingSite = null;
     if (isUnemployedSite(transfer.toSite)) {
       worker.status = 'Inactive';
+    } else if (worker.status === 'Inactive') {
+      worker.status = 'Active';
     }
     await worker.save();
 
@@ -204,16 +252,16 @@ router.put('/:id/approve', protect, managerOrAdmin, async (req, res) => {
       targetEntity: {
         entityType: 'Worker',
         entityId: worker._id.toString(),
-        name: `${worker.firstName} ${worker.lastName} (${worker.employeeId})`
+        name: `${worker.firstName} ${worker.lastName} (${worker.employeeId || 'ID Pending'})`
       },
       previousState,
       newState: {
-        assignedSite: transfer.toSite._id,
-        newSiteName: transfer.toSite.name,
+        assignedSite: targetSiteId,
+        newSiteName: targetSiteName,
         transferStatus: 'None',
         pendingSite: null
       },
-      details: `Transfer approved. Worker permanently reassigned to site "${transfer.toSite.name}"`
+      details: `Transfer approved. Worker permanently reassigned to site "${targetSiteName}"`
     });
 
     res.json({ message: 'Transfer approved successfully. Worker primary site updated.', transfer });
@@ -241,7 +289,11 @@ router.put('/:id/reject', protect, managerOrAdmin, async (req, res) => {
       return res.status(400).json({ message: `Transfer already ${transfer.status.toLowerCase()}` });
     }
 
-    const worker = await Worker.findById(transfer.workerId._id);
+    const workerId = transfer.workerId?._id || transfer.workerId;
+    const worker = workerId ? await Worker.findById(workerId) : null;
+    const targetSiteId = (transfer.toSite?._id || transfer.toSite)?.toString();
+    const targetSiteName = transfer.toSite?.name || 'Target Site';
+
     const previousState = {
       assignedSite: worker?.assignedSite,
       transferStatus: worker?.transferStatus,
@@ -255,9 +307,12 @@ router.put('/:id/reject', protect, managerOrAdmin, async (req, res) => {
     await transfer.save();
 
     if (worker) {
-      worker.transferStatus = 'None';
-      worker.pendingSite = null;
-      await worker.save();
+      // Only clear pending status if the worker was actually pending to THIS rejected site
+      if (!worker.pendingSite || worker.pendingSite.toString() === targetSiteId) {
+        worker.transferStatus = 'None';
+        worker.pendingSite = null;
+        await worker.save();
+      }
     }
 
     await logAudit({
@@ -265,15 +320,15 @@ router.put('/:id/reject', protect, managerOrAdmin, async (req, res) => {
       actionType: 'SITE_TRANSFER_REJECT',
       targetEntity: {
         entityType: 'Worker',
-        entityId: worker?._id?.toString() || 'unknown',
+        entityId: worker?._id?.toString() || workerId?.toString() || 'unknown',
         name: worker ? `${worker.firstName} ${worker.lastName}` : 'Worker'
       },
       previousState,
       newState: {
-        transferStatus: 'None',
-        pendingSite: null
+        transferStatus: worker?.transferStatus || 'None',
+        pendingSite: worker?.pendingSite || null
       },
-      details: `Transfer to site "${transfer.toSite.name}" rejected by ${req.user.name}. Reason: ${notes || 'Not specified'}`
+      details: `Transfer to site "${targetSiteName}" rejected by ${req.user.name}. Reason: ${notes || 'Not specified'}`
     });
 
     res.json({ message: 'Transfer request rejected. Primary deployment reverted while daily attendance is preserved.', transfer });

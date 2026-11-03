@@ -74,12 +74,17 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
 // @access  Private/Admin
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const site = await Site.findByIdAndDelete(req.params.id);
-    if (site) {
-      res.json({ message: 'Site removed' });
-    } else {
-      res.status(404).json({ message: 'Site not found' });
+    const site = await Site.findById(req.params.id);
+    if (!site) {
+      return res.status(404).json({ message: 'Site not found' });
     }
+
+    if (/demo\s*unemployed|unemployed/i.test(site.name)) {
+      return res.status(400).json({ message: 'Cannot delete the system default Demo Unemployed site.' });
+    }
+
+    await Site.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Site removed successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
