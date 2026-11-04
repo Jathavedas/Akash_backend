@@ -52,7 +52,7 @@ const workerSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Pre-save hook: Any worker assigned or transferred to Demo unemployed is automatically set to Inactive
-workerSchema.pre('save', async function(next) {
+workerSchema.pre('save', async function() {
   try {
     if (this.assignedSite && (this.isModified('assignedSite') || this.isNew || this.isModified('status'))) {
       const Site = mongoose.model('Site');
@@ -64,7 +64,6 @@ workerSchema.pre('save', async function(next) {
   } catch (err) {
     // continue if lookup fails
   }
-  next();
 });
 
 module.exports = mongoose.model('Worker', workerSchema);
